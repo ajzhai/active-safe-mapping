@@ -3,14 +3,51 @@ import os
 import time
 import random
 import rospy
+import tf
 import gym
 from gym.spaces import Tuple, Box
 from sensor_msgs.msg import Image as ImageMsg
+from std_msgs.msg import Bool as BoolMsg
+from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
+from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Transform
 from PIL import Image
 
+
 X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 4.
+Z = 3.
+DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.6, 0.6
+TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
+TABLES_PER_ROOM = 3
 SAFE_MAPPER_LATENT_DIM = 64
 MAV_NAME = 'firefly'
+
+
+def random_table_centers(n_tables):
+    """
+    Generate random table center locations within the bounds of the room and not
+    overlapping with each other.
+
+    :param n_tables: The number of table centers to generate
+    :return: The table centers in a list of [x, y] pairs
+    """
+    def is_overlap(centers, new_x, new_y):
+        overlap = False
+        for x, y in centers:
+            if abs(x - new_x) < TABLE_X_LENGTH / 2 or abs(y - new_y) < TABLE_Y_LENGTH / 2:
+                overlap = True
+        return overlap
+
+    centers = []
+    for _ in range(n_tables):
+        new_x = TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - TABLE_X_LENGTH)
+        new_y = TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - TABLE_Y_LENGTH)
+        while is_overlap(centers, new_x, new_y):
+            new_x = TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - TABLE_X_LENGTH)
+            new_y = TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - TABLE_Y_LENGTH)
+        centers.append([new_x, new_y])
+    return centers
+
 
 class RandomRooms(gym.Env):
     """
@@ -21,18 +58,16 @@ class RandomRooms(gym.Env):
 
     def __init__(self, config):
         rospy.init_node('reinforcement_learner', anonymous=True)
-        rospy.sleep(10.)  # Waiting for setup to complete
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
-        rospy.Subscriber('/' + MAV_NAME + '/arrived_flag', ImageMsg,
+        rospy.Subscriber('/' + MAV_NAME + '/arrived_flag', BoolMsg,
                          self.ros_arrival_callback)
+        self.waypoint_publisher = rospy.Publisher('/firefly/command/trajectory',
+                                                  MultiDOFJointTrajectory)
 
-        self.rooms_dir = config['rooms_dir']  # directory containing room files
         self.img_scale = config['img_scale']  # pixels per unit length
-        self.rooms_left = set(range(len(os.listdir(self.rooms_dir))))
 
         self.true_map = None
-        self.full_view = None
         self.enter_new_room()
 
         self.x, self.y, self.t = 0., 0., 0.
@@ -51,22 +86,38 @@ class RandomRooms(gym.Env):
         """Agent's state observation: position and safe-mapper latent code."""
         return [self.x, self.y], self.model.latent_state()
 
-    def enter_new_room(self, room_id=-1):
+    def enter_new_room(self):
         """
-        Loads the true safe-map and image data for a new room.
-        :param room_id: The ID of the room to load. If negative, a random
-                        unseen room will be chosen.
-        :return: none
+        Generates a new random room and updates true safe map. Each room contains several
+        randomly placed tables and we consider tabletop surfaces as the safe areas.
         """
-        if room_id < 0:
-            room_id = random.choice(self.rooms_left)
-        self.true_map = np.load(self.rooms_dir + str(room_id) + 'truth.npy')
-        self.full_view = np.load(self.rooms_dir + str(room_id) + 'view.npy')
-        self.rooms_left.remove(room_id)
+        # Delete old tables
+        for i in range(TABLES_PER_ROOM):
+            os.system("rosservice call gazebo/delete_model '{model_name: table" + str(i) + "}'")
+
+        # Spawn new tables
+        table_centers = random_table_centers(TABLES_PER_ROOM)
+        for i in range(TABLES_PER_ROOM):
+            os.system("rosrun gazebo_ros spawn_model -database cafe_table -sdf " +
+                      "-model table" + str(i) +
+                      " -x " + str(table_centers[i][0]) +
+                      " -y " + str(table_centers[i][1]))
+
+        # Calculate new true safe map
+        self.true_map = np.zeros((int(X_MAX * self.img_scale), int(Y_MAX * self.img_scale)))
+        safe_x_extent = (TABLE_X_LENGTH - DRONE_X_LENGTH) / 2
+        safe_y_extent = (TABLE_Y_LENGTH - DRONE_Y_LENGTH) / 2
+        for x, y in table_centers:
+            self.true_map[int((x - safe_x_extent) * self.img_scale):
+                          int((x + safe_x_extent) * self.img_scale),
+                          int((y - safe_y_extent) * self.img_scale):
+                          int((y + safe_y_extent) * self.img_scale)] = 1
 
     def reset(self):
-        """Called at the end of each episode(room)."""
+        """Called at the end of each episode(room) to enter a new room and reset position."""
         self.enter_new_room()
+        self.ros_publish_waypoint([0, 0])
+        self.wait_for_arrival(0.1)
         self.x, self.y, self.t = 0., 0., 0.
         return self.agent_observation()
 
@@ -83,15 +134,12 @@ class RandomRooms(gym.Env):
         assert len(action) == 2
         reward = self._get_reward(action, 0.1)
 
-        ros_publish_waypoint(action)
-        self.in_transit = True
-        start_time = time.time()
-        while self.in_transit:
-            time.sleep(0.1)
+        self.ros_publish_waypoint(action)
+        travel_time = self.wait_for_arrival(0.1)
 
         #self.model.train()
         #self.t += self._get_time_penalty(action)
-        self.t += time.time() - start_time
+        self.t += travel_time
         self.x, self.y = action[0], action[1]
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
@@ -127,4 +175,39 @@ class RandomRooms(gym.Env):
 
     def ros_arrival_callback(self, arrival_msg):
         """Change flag upon ROS arrival message to allow RL step to continue."""
+        assert arrival_msg
         self.in_transit = False
+
+    def ros_publish_waypoint(self, action):
+        """Publish single-point ROS trajectory message with given x, y and default z, att."""
+        # create trajectory msg
+        traj = MultiDOFJointTrajectory()
+        traj.header.stamp = rospy.Time.now()
+        traj.header.frame_id = 'frame'
+        traj.joint_names.append('base_link')
+
+        # create end point for trajectory
+        transforms = Transform()
+        transforms.translation.x = action[0]
+        transforms.translation.y = action[1]
+        transforms.translation.z = Z
+
+        quat = tf.transformations.quaternion_from_euler(0, 0, 0, axes='rzyx')
+        transforms.rotation.x = quat[0]
+        transforms.rotation.y = quat[1]
+        transforms.rotation.z = quat[2]
+        transforms.rotation.w = quat[3]
+
+        velocities = Twist()
+        accel = Twist()
+        point = MultiDOFJointTrajectoryPoint([transforms], [velocities], [accel], rospy.Time())
+        traj.points.append(point)
+        self.waypoint_publisher.publish(traj)
+
+    def wait_for_arrival(self, check_freq):
+        """Wait until ROS arrival message is received."""
+        self.in_transit = True
+        start_time = time.time()
+        while self.in_transit:
+            time.sleep(check_freq)
+        return time.time() - start_time
