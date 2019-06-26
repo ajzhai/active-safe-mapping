@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>safe_mapping</name>
+  <version>0.0.0</version>
+  <description>The safe_mapping package</description>
+
+  <maintainer email="albertz@caltech.edu">Albert Zhai</maintainer>
+
+
+  <!-- One license tag required, multiple allowed, one license per tag -->
+  <!-- Commonly used license strings: -->
+  <!--   BSD, MIT, Boost Software License, GPLv2, GPLv3, LGPLv2.1, LGPLv3 -->
+  <license>BSD</license>
+
+
+  <!-- Url tags are optional, but multiple are allowed, one per tag -->
+  <!-- Optional attribute type can be: website, bugtracker, or repository -->
+  <!-- Example: -->
+  <!-- <url type="website">http://wiki.ros.org/safe_mapping</url> -->
+
+  <author email="albertz@caltech.edu">Albert Zhai</author>
+
+  <!-- The *depend tags are used to specify dependencies -->
+  <!-- Dependencies can be catkin packages or system dependencies -->
+  <!-- Examples: -->
+  <!-- Use depend as a shortcut for packages that are both build and exec dependencies -->
+  <!--   <depend>roscpp</depend> -->
+  <!--   Note that this is equivalent to the following: -->
+  <!--   <build_depend>roscpp</build_depend> -->
+  <!--   <exec_depend>roscpp</exec_depend> -->
+  <!-- Use build_depend for packages you need at compile time: -->
+  <!--   <build_depend>message_generation</build_depend> -->
+  <!-- Use build_export_depend for packages you need in order to build against this package: -->
+  <!--   <build_export_depend>message_generation</build_export_depend> -->
+  <!-- Use buildtool_depend for build tool packages: -->
+  <!--   <buildtool_depend>catkin</buildtool_depend> -->
+  <!-- Use exec_depend for packages you need at runtime: -->
+  <!--   <exec_depend>message_runtime</exec_depend> -->
+  <!-- Use test_depend for packages you need only for testing: -->
+  <!--   <test_depend>gtest</test_depend> -->
+  <!-- Use doc_depend for packages you need only for building documentation: -->
+  <!--   <doc_depend>doxygen</doc_depend> -->
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>mav_msgs</build_depend>
+  <build_depend>mav_planning_msgs</build_depend>
+  <build_depend>mavlink</build_depend>
+  <build_depend>mavros</build_depend>
+  <build_depend>rotors_comm</build_depend>
+  <build_depend>rotors_control</build_depend>
+  <build_depend>rotors_description</build_depend>
+  <build_depend>rotors_evaluation</build_depend>
+  <build_depend>rotors_gazebo</build_depend>
+  <build_depend>rotors_gazebo_plugins</build_depend>
+  <build_depend>rotors_hil_interface</build_depend>
+  <build_depend>rotors_joy_interface</build_depend>
+  <build_depend>rqt_rotors</build_depend>
+  <build_export_depend>mav_msgs</build_export_depend>
+  <build_export_depend>mav_planning_msgs</build_export_depend>
+  <build_export_depend>mavlink</build_export_depend>
+  <build_export_depend>mavros</build_export_depend>
+  <build_export_depend>rotors_comm</build_export_depend>
+  <build_export_depend>rotors_control</build_export_depend>
+  <build_export_depend>rotors_description</build_export_depend>
+  <build_export_depend>rotors_evaluation</build_export_depend>
+  <build_export_depend>rotors_gazebo</build_export_depend>
+  <build_export_depend>rotors_gazebo_plugins</build_export_depend>
+  <build_export_depend>rotors_hil_interface</build_export_depend>
+  <build_export_depend>rotors_joy_interface</build_export_depend>
+  <build_export_depend>rqt_rotors</build_export_depend>
+  <exec_depend>mav_msgs</exec_depend>
+  <exec_depend>mav_planning_msgs</exec_depend>
+  <exec_depend>mavlink</exec_depend>
+  <exec_depend>mavros</exec_depend>
+  <exec_depend>rotors_comm</exec_depend>
+  <exec_depend>rotors_control</exec_depend>
+  <exec_depend>rotors_description</exec_depend>
+  <exec_depend>rotors_evaluation</exec_depend>
+  <exec_depend>rotors_gazebo</exec_depend>
+  <exec_depend>rotors_gazebo_plugins</exec_depend>
+  <exec_depend>rotors_hil_interface</exec_depend>
+  <exec_depend>rotors_joy_interface</exec_depend>
+  <exec_depend>rqt_rotors</exec_depend>
+
+
+  <!-- The export tag contains other, unspecified, tags -->
+  <export>
+    <!-- Other tools can request additional information be placed here -->
+
+  </export>
+</package>
