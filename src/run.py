@@ -3,8 +3,8 @@ from ray import tune
 from ray.tune import grid_search
 from gym_randrooms import RandomRooms
 
-ROOMS_DIR = ''
 IMG_SCALE = 100
+TIME_WEIGHT = 0.2
 EPISODE_LENGTH = 100
 
 if __name__ == "__main__":
@@ -19,8 +19,8 @@ if __name__ == "__main__":
             "lr": grid_search([1e-2, 1e-4, 1e-6]),  # try different lrs
             "num_workers": 1,  # parallelism
             "env_config": {
-                "rooms_dir": ROOMS_DIR,
                 "img_scale": IMG_SCALE,
+                "time_weight": TIME_WEIGHT,
                 "ep_length": EPISODE_LENGTH
             },
         },

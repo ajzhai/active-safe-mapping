@@ -18,7 +18,7 @@ X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 4.
 Z = 3.
 DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.6, 0.6
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
-TABLES_PER_ROOM = 3
+TABLES_PER_ROOM = 5
 SAFE_MAPPER_LATENT_DIM = 64
 MAV_NAME = 'firefly'
 
@@ -61,7 +61,7 @@ class RandomRooms(gym.Env):
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
         rospy.Subscriber('/' + MAV_NAME + '/arrived_flag', BoolMsg,
-                         self.ros_arrival_callback)
+                         self.ros_pose_callback)
         self.waypoint_publisher = rospy.Publisher('/firefly/command/trajectory',
                                                   MultiDOFJointTrajectory)
 
@@ -71,8 +71,8 @@ class RandomRooms(gym.Env):
         self.enter_new_room()
 
         self.x, self.y, self.t = 0., 0., 0.
-        self.in_transit = False
         self.model = SafeMapperLSTM()
+        self.time_weight = config['time_weight']
         self.ep_len = config['ep_length']  # episode length in actual time
 
         self.action_space = Box(low=-np.inf, high=np.inf,
@@ -86,7 +86,7 @@ class RandomRooms(gym.Env):
         """Agent's state observation: position and safe-mapper latent code."""
         return [self.x, self.y], self.model.latent_state()
 
-    def enter_new_room(self):
+    def _enter_new_room(self):
         """
         Generates a new random room and updates true safe map. Each room contains several
         randomly placed tables and we consider tabletop surfaces as the safe areas.
@@ -115,9 +115,9 @@ class RandomRooms(gym.Env):
 
     def reset(self):
         """Called at the end of each episode(room) to enter a new room and reset position."""
-        self.enter_new_room()
+        self._enter_new_room()
         self.ros_publish_waypoint([0, 0])
-        self.wait_for_arrival(0.1)
+        self.wait_for_arrival([0, 0])
         self.x, self.y, self.t = 0., 0., 0.
         return self.agent_observation()
 
@@ -132,22 +132,24 @@ class RandomRooms(gym.Env):
         :return: state, reward, done (bool), auxiliary info
         """
         assert len(action) == 2
-        reward = self._get_reward(action, 0.1)
+        start_time = time.time()
 
         self.ros_publish_waypoint(action)
-        travel_time = self.wait_for_arrival(0.1)
+        model_err = self._get_model_improvement(action)
+        self.model.train()
+        self.wait_for_arrival(action)
 
-        #self.model.train()
+        travel_time = time.time() - start_time
         #self.t += self._get_time_penalty(action)
         self.t += travel_time
-        self.x, self.y = action[0], action[1]
+        reward = model_err - self.time_weight * travel_time
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
 
-    def _get_reward(self, action, time_weight):
+    def _get_reward(self, action):
         """Reward consists of model improvement minus time taken, weighted."""
         return self._get_model_improvement(action) - \
-               time_weight * self._get_time_penalty(action)
+               self.time_weight * self._get_time_penalty(action)
 
     def _get_time_penalty(self, action):
         """Distance-based estimate of the time needed to perform the action."""
@@ -172,11 +174,12 @@ class RandomRooms(gym.Env):
         img = np.array(Image.frombuffer('RGB', (img_msg.width, img_msg.height),
                                         img_msg.data, 'raw', 'L', 0, 1))
         # Feed new image to LSTM
+        self.model.images.append(img)
 
-    def ros_arrival_callback(self, arrival_msg):
-        """Change flag upon ROS arrival message to allow RL step to continue."""
-        assert arrival_msg
-        self.in_transit = False
+    def ros_pose_callback(self, pose_msg):
+        """Update internal position state."""
+        self.x = pose_msg.pose.x
+        self.y = pose_msg.pose.y
 
     def ros_publish_waypoint(self, action):
         """Publish single-point ROS trajectory message with given x, y and default z, att."""
@@ -204,10 +207,7 @@ class RandomRooms(gym.Env):
         traj.points.append(point)
         self.waypoint_publisher.publish(traj)
 
-    def wait_for_arrival(self, check_freq):
-        """Wait until ROS arrival message is received."""
-        self.in_transit = True
-        start_time = time.time()
-        while self.in_transit:
+    def wait_for_arrival(self, dest, check_freq=0.1, tol=0.05):
+        """Wait until drone has arrived at the specified destination x, y."""
+        while abs(self.x - dest[0]) > tol or abs(self.y - dest[1]) > tol:
             time.sleep(check_freq)
-        return time.time() - start_time
