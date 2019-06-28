@@ -137,7 +137,7 @@ class RandomRooms(gym.Env):
         model_err = self._get_model_improvement(label)
         self.model.train_one_step(label)
 
-        while True:  # Travel to query destination in steps
+        while True:  # Travel to query destination in small steps
             dist_remain = self._get_distance(action)
             if dist_remain < self.img_interval:
                 self.ros_publish_waypoint(action)
