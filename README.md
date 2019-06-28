@@ -1,5 +1,5 @@
 # active-safe-mapping
-ROS package for simulating UAV landing area exploration with visual sensing. Implements novel reinforcement-based active learning paradigm.
+ROS package for simulating UAV landing area exploration with visual sensing. Implements novel reinforcement-based active learning paradigm. Requires ROS, Gym, Ray.
 
 The safe mapping problem for UAV landing is defined as follows: given an unknown area, create an (x, y)-map of where it is safe to land and
 where it is not. Our goal is to use visual information to both create this model and plan the flight trajectory. In our main approach, 
