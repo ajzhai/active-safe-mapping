@@ -7,10 +7,8 @@ import tf
 import gym
 from gym.spaces import Tuple, Box
 from sensor_msgs.msg import Image as ImageMsg
-from std_msgs.msg import Bool as BoolMsg
 from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
-from geometry_msgs.msg import Twist
-from geometry_msgs.msg import Transform
+from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
 
 
@@ -57,34 +55,36 @@ class RandomRooms(gym.Env):
     """
 
     def __init__(self, config):
-        rospy.init_node('reinforcement_learner', anonymous=True)
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
-        rospy.Subscriber('/' + MAV_NAME + '/arrived_flag', BoolMsg,
+        rospy.Subscriber('/' + MAV_NAME + '/ground_truth/pose', Pose,
                          self.ros_pose_callback)
+        self.ready_for_img = False
         self.waypoint_publisher = rospy.Publisher('/firefly/command/trajectory',
                                                   MultiDOFJointTrajectory)
 
-        self.img_scale = config['img_scale']  # pixels per unit length
-
-        self.true_map = None
-        self.enter_new_room()
-
         self.x, self.y, self.t = 0., 0., 0.
+        self.start_time = time.time()
         self.model = SafeMapperLSTM()
-        self.time_weight = config['time_weight']
+        self.time_weight = config['time_weight']  # coefficient of time (s) in reward
         self.ep_len = config['ep_length']  # episode length in actual time
+        self.map_scale = config['map_scale']  # pixels per unit length
+        self.img_interval = config['img_interval']  # how far apart each image is (at most)
+        self.true_map = None
+        self.reset()
 
-        self.action_space = Box(low=-np.inf, high=np.inf,
-                                shape=(2,), dtype=np.float32)
+        self.action_space = Box(low=np.array([X_MIN, Y_MIN]), high=np.array([X_MAX, Y_MAX]),
+                                dtype=np.float32)
         self.observation_space = Tuple((self.action_space,
                                         Box(low=-np.inf, high=np.inf,
                                             shape=(SAFE_MAPPER_LATENT_DIM,),
-                                            dtype=np.float32)))
+                                            dtype=np.float32),
+                                        Box(low=0, high=np.inf,
+                                            shape=(1,), dtype=np.float32)))
 
     def agent_observation(self):
-        """Agent's state observation: position and safe-mapper latent code."""
-        return [self.x, self.y], self.model.latent_state()
+        """Agent's state observation: position, safe-mapper latent code, time."""
+        return [self.x, self.y], self.model.latent_state(), [self.t]
 
     def _enter_new_room(self):
         """
@@ -104,14 +104,14 @@ class RandomRooms(gym.Env):
                       " -y " + str(table_centers[i][1]))
 
         # Calculate new true safe map
-        self.true_map = np.zeros((int(X_MAX * self.img_scale), int(Y_MAX * self.img_scale)))
+        self.true_map = np.zeros((int(X_MAX * self.map_scale), int(Y_MAX * self.map_scale)))
         safe_x_extent = (TABLE_X_LENGTH - DRONE_X_LENGTH) / 2
         safe_y_extent = (TABLE_Y_LENGTH - DRONE_Y_LENGTH) / 2
         for x, y in table_centers:
-            self.true_map[int((x - safe_x_extent) * self.img_scale):
-                          int((x + safe_x_extent) * self.img_scale),
-                          int((y - safe_y_extent) * self.img_scale):
-                          int((y + safe_y_extent) * self.img_scale)] = 1
+            self.true_map[int((x - safe_x_extent) * self.map_scale):
+                          int((x + safe_x_extent) * self.map_scale),
+                          int((y - safe_y_extent) * self.map_scale):
+                          int((y + safe_y_extent) * self.map_scale)] = 1
 
     def reset(self):
         """Called at the end of each episode(room) to enter a new room and reset position."""
@@ -119,6 +119,7 @@ class RandomRooms(gym.Env):
         self.ros_publish_waypoint([0, 0])
         self.wait_for_arrival([0, 0])
         self.x, self.y, self.t = 0., 0., 0.
+        self.start_time = time.time()
         return self.agent_observation()
 
     def step(self, action):
@@ -132,35 +133,46 @@ class RandomRooms(gym.Env):
         :return: state, reward, done (bool), auxiliary info
         """
         assert len(action) == 2
-        start_time = time.time()
+        label = self._get_label(action)
+        model_err = self._get_model_improvement(label)
+        self.model.train_one_step(label)
 
-        self.ros_publish_waypoint(action)
-        model_err = self._get_model_improvement(action)
-        self.model.train()
-        self.wait_for_arrival(action)
+        while True:  # Travel to query destination in steps
+            dist_remain = self._get_distance(action)
+            if dist_remain < self.img_interval:
+                self.ros_publish_waypoint(action)
+                self.wait_for_arrival(action)
+                break
+            else:
+                frac_dist_remain = self.img_interval / dist_remain
+                next_x = self.x + (action[0] - self.x) * frac_dist_remain
+                next_y = self.y + (action[1] - self.y) * frac_dist_remain
+                self.ros_publish_waypoint([next_x, next_y])
+                self.wait_for_arrival([next_x, next_y])
 
-        travel_time = time.time() - start_time
-        #self.t += self._get_time_penalty(action)
-        self.t += travel_time
-        reward = model_err - self.time_weight * travel_time
+        self.t = time.time() - self.start_time
+        reward = model_err  # - self.time_weight * travel_time
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
+
+    def _get_label(self, action):
+        """Get the true safe map label at the given position."""
+        # Converting query position to pixel indices
+        x_idx = int(action[0] * self.map_scale)
+        y_idx = int(action[1] * self.map_scale)
+        return self.true_map[x_idx][y_idx]
 
     def _get_reward(self, action):
         """Reward consists of model improvement minus time taken, weighted."""
         return self._get_model_improvement(action) - \
-               self.time_weight * self._get_time_penalty(action)
+               self.time_weight * self._get_distance(action)
 
-    def _get_time_penalty(self, action):
-        """Distance-based estimate of the time needed to perform the action."""
+    def _get_distance(self, action):
+        """Distance of the action destination from the current position."""
         return np.sqrt((action[0] - self.x) ** 2 + (action[1] - self.y) ** 2)
 
-    def _get_model_improvement(self, action, mode='gl'):
+    def _get_model_improvement(self, label, mode='gl'):
         """Heuristic metric for the improvement of the safe-mapper."""
-        # Converting query position to pixel indices
-        x_idx = int(action[0] * self.img_scale)
-        y_idx = int(action[1] * self.img_scale)
-        label = self.true_map[x_idx][y_idx]
         if mode == 'gl':
             return self.model.gradlen(label)
         elif mode == 'lcu':
@@ -170,16 +182,20 @@ class RandomRooms(gym.Env):
 
     def ros_img_callback(self, img_msg):
         """Send image to safe-mapper LSTM upon ROS image message."""
+        if not self.ready_for_img:
+            return
+        self.ready_for_img = False
+
         # Convert to grayscale array
         img = np.array(Image.frombuffer('RGB', (img_msg.width, img_msg.height),
                                         img_msg.data, 'raw', 'L', 0, 1))
         # Feed new image to LSTM
-        self.model.images.append(img)
+        self.model.save_input([self.x, self.y], img)
 
     def ros_pose_callback(self, pose_msg):
         """Update internal position state."""
-        self.x = pose_msg.pose.x
-        self.y = pose_msg.pose.y
+        self.x = pose_msg.position.x
+        self.y = pose_msg.position.y
 
     def ros_publish_waypoint(self, action):
         """Publish single-point ROS trajectory message with given x, y and default z, att."""
@@ -208,6 +224,14 @@ class RandomRooms(gym.Env):
         self.waypoint_publisher.publish(traj)
 
     def wait_for_arrival(self, dest, check_freq=0.1, tol=0.05):
-        """Wait until drone has arrived at the specified destination x, y."""
+        """
+        Wait until drone has arrived at the specified destination x, y.
+
+        :param dest: x, y pair of the destination position
+        :param (optional) check_freq : Frequency (Hz) with which to check arrival
+        :param (optional) tol: Error tolerance for x and y
+        :return: none
+        """
         while abs(self.x - dest[0]) > tol or abs(self.y - dest[1]) > tol:
             time.sleep(check_freq)
+        self.ready_for_img = True
