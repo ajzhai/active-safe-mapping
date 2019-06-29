@@ -12,12 +12,12 @@ from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
 
 
-X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 4.
+X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 5.
 Z = 3.
 DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.6, 0.6
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
 TABLES_PER_ROOM = 5
-SAFE_MAPPER_LATENT_DIM = 64
+SAFE_MAPPER_LATENT_DIM = 6
 MAV_NAME = 'firefly'
 
 
@@ -32,7 +32,7 @@ def random_table_centers(n_tables):
     def is_overlap(centers, new_x, new_y):
         overlap = False
         for x, y in centers:
-            if abs(x - new_x) < TABLE_X_LENGTH / 2 or abs(y - new_y) < TABLE_Y_LENGTH / 2:
+            if abs(x - new_x) < TABLE_X_LENGTH and abs(y - new_y) < TABLE_Y_LENGTH:
                 overlap = True
         return overlap
 
@@ -46,6 +46,12 @@ def random_table_centers(n_tables):
         centers.append([new_x, new_y])
     return centers
 
+class SafeMapperLSTM:
+    def latent_state(self): return np.zeros(SAFE_MAPPER_LATENT_DIM)
+    def save_input(self, action, label): pass
+    def train_one_step(self, label): pass
+    def gradlen(self, label): return -1
+    def uncertainty(self): return label
 
 class RandomRooms(gym.Env):
     """
@@ -55,6 +61,7 @@ class RandomRooms(gym.Env):
     """
 
     def __init__(self, config):
+        rospy.init_node('agent', anonymous=True)
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
         rospy.Subscriber('/' + MAV_NAME + '/ground_truth/pose', Pose,
@@ -71,7 +78,9 @@ class RandomRooms(gym.Env):
         self.map_scale = config['map_scale']  # pixels per unit length
         self.img_interval = config['img_interval']  # how far apart each image is (at most)
         self.true_map = None
-        self.reset()
+        #self._enter_new_room(True)
+        #self.ros_publish_waypoint([0, 0])
+        time.sleep(5.)
 
         self.action_space = Box(low=np.array([X_MIN, Y_MIN]), high=np.array([X_MAX, Y_MAX]),
                                 dtype=np.float32)
@@ -86,14 +95,15 @@ class RandomRooms(gym.Env):
         """Agent's state observation: position, safe-mapper latent code, time."""
         return [self.x, self.y], self.model.latent_state(), [self.t]
 
-    def _enter_new_room(self):
+    def _enter_new_room(self, is_first=False):
         """
         Generates a new random room and updates true safe map. Each room contains several
         randomly placed tables and we consider tabletop surfaces as the safe areas.
         """
         # Delete old tables
-        for i in range(TABLES_PER_ROOM):
-            os.system("rosservice call gazebo/delete_model '{model_name: table" + str(i) + "}'")
+        if not is_first:
+            for i in range(TABLES_PER_ROOM):
+                os.system("rosservice call /gazebo/delete_model '{model_name: table" + str(i) + "}'")
 
         # Spawn new tables
         table_centers = random_table_centers(TABLES_PER_ROOM)
@@ -115,8 +125,8 @@ class RandomRooms(gym.Env):
 
     def reset(self):
         """Called at the end of each episode(room) to enter a new room and reset position."""
-        self._enter_new_room()
         self.ros_publish_waypoint([0, 0])
+        self._enter_new_room()
         self.wait_for_arrival([0, 0])
         self.x, self.y, self.t = 0., 0., 0.
         self.start_time = time.time()
@@ -151,7 +161,7 @@ class RandomRooms(gym.Env):
                 self.wait_for_arrival([next_x, next_y])
 
         self.t = time.time() - self.start_time
-        reward = model_err  # - self.time_weight * travel_time
+        reward = model_err + self.x * self.y  # - self.time_weight * travel_time
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
 
@@ -223,7 +233,7 @@ class RandomRooms(gym.Env):
         traj.points.append(point)
         self.waypoint_publisher.publish(traj)
 
-    def wait_for_arrival(self, dest, check_freq=0.1, tol=0.05):
+    def wait_for_arrival(self, dest, check_freq=0.05, tol=0.03):
         """
         Wait until drone has arrived at the specified destination x, y.
 
@@ -232,6 +242,6 @@ class RandomRooms(gym.Env):
         :param (optional) tol: Error tolerance for x and y
         :return: none
         """
-        while abs(self.x - dest[0]) > tol or abs(self.y - dest[1]) > tol:
+        while abs(self.x - 0.132646 - dest[0]) > tol or abs(self.y - dest[1]) > tol:
             time.sleep(check_freq)
         self.ready_for_img = True

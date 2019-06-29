@@ -28,6 +28,7 @@
       <rosparam command="load" file="$(find rotors_gazebo)/resource/$(arg mav_name).yaml" />
       <remap from="odometry" to="ground_truth/odometry" />
     </node>
+    <node name="takeoff_and_hover" pkg="safe_mapping" type="takeoff_and_hover" output="screen"/>
     <node name="reinforcement_learner" pkg="safe_mapping" type="run.py" output="screen"/>
     <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
     <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" />

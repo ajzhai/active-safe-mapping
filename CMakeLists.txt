@@ -144,6 +144,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(high_move_and_hover src/high_move_and_hover.cpp)
+add_executable(takeoff_and_hover src/takeoff_and_hover.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -154,9 +155,14 @@ add_executable(high_move_and_hover src/high_move_and_hover.cpp)
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 add_dependencies(high_move_and_hover ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(takeoff_and_hover ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(high_move_and_hover
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(takeoff_and_hover
   ${catkin_LIBRARIES}
 )
 
@@ -171,6 +177,7 @@ target_link_libraries(high_move_and_hover
 ## in contrast to setup.py, you can choose the destination
 install(PROGRAMS
   src/safe_map_active_learner.py
+  src/run.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
