@@ -11,7 +11,7 @@ from sensor_msgs.msg import Image as ImageMsg
 from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
 from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
-import Drone_Classifier as dc
+import drone_classifier as dc
 
 X_MIN, X_MAX, Y_MIN, Y_MAX = -0.03, 5., -0.03, 5.
 X_START, Y_START = X_MAX / 2, Y_MAX / 2
