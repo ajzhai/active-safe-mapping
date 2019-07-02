@@ -4,20 +4,23 @@ import time
 import random
 import rospy
 import tf
+import matplotlib.pyplot as plt
 import gym
 from gym.spaces import Tuple, Box
 from sensor_msgs.msg import Image as ImageMsg
 from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
 from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
+import Drone_Classifier as dc
 
-
-X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 5.
+X_MIN, X_MAX, Y_MIN, Y_MAX = -0.03, 5., -0.03, 5.
+X_START, Y_START = X_MAX / 2, Y_MAX / 2
 Z = 3.
-DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.6, 0.6
+MIN_WALL_DIST = 0.1
+DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.1, 0.1
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
-TABLES_PER_ROOM = 5
-SAFE_MAPPER_LATENT_DIM = 6
+TABLES_PER_ROOM = 8
+SAFE_MAPPER_LATENT_DIM = 2004
 MAV_NAME = 'firefly'
 
 
@@ -46,13 +49,6 @@ def random_table_centers(n_tables):
         centers.append([new_x, new_y])
     return centers
 
-class SafeMapperLSTM:
-    def latent_state(self): return np.zeros(SAFE_MAPPER_LATENT_DIM)
-    def save_input(self, action, label): pass
-    def train_one_step(self, label): pass
-    def gradlen(self, label): return -1
-    def uncertainty(self): return label
-
 class RandomRooms(gym.Env):
     """
     RL environment for exploration of a set of rooms. Each room gets one
@@ -62,17 +58,17 @@ class RandomRooms(gym.Env):
 
     def __init__(self, config):
         rospy.init_node('agent', anonymous=True)
+        self.model = dc.Classifier(dc.CNN)
+        self.ready_for_img = False
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
         rospy.Subscriber('/' + MAV_NAME + '/ground_truth/pose', Pose,
                          self.ros_pose_callback)
-        self.ready_for_img = False
         self.waypoint_publisher = rospy.Publisher('/firefly/command/trajectory',
                                                   MultiDOFJointTrajectory)
 
         self.x, self.y, self.t = 0., 0., 0.
         self.start_time = time.time()
-        self.model = SafeMapperLSTM()
         self.time_weight = config['time_weight']  # coefficient of time (s) in reward
         self.ep_len = config['ep_length']  # episode length in actual time
         self.map_scale = config['map_scale']  # pixels per unit length
@@ -80,11 +76,14 @@ class RandomRooms(gym.Env):
         self.true_map = None
         #self._enter_new_room(True)
         #self.ros_publish_waypoint([0, 0])
-        time.sleep(5.)
+        time.sleep(3.)
 
-        self.action_space = Box(low=np.array([X_MIN, Y_MIN]), high=np.array([X_MAX, Y_MAX]),
+        self.action_space = Box(low=np.array([X_MIN + MIN_WALL_DIST, Y_MIN + MIN_WALL_DIST]), 
+                                high=np.array([X_MAX - MIN_WALL_DIST, Y_MAX - MIN_WALL_DIST]),
                                 dtype=np.float32)
-        self.observation_space = Tuple((self.action_space,
+        self.observation_space = Tuple((Box(low=np.array([X_MIN, Y_MIN]),
+                                            high=np.array([X_MAX, Y_MAX]),
+                                            dtype=np.float32),
                                         Box(low=-np.inf, high=np.inf,
                                             shape=(SAFE_MAPPER_LATENT_DIM,),
                                             dtype=np.float32),
@@ -125,9 +124,12 @@ class RandomRooms(gym.Env):
 
     def reset(self):
         """Called at the end of each episode(room) to enter a new room and reset position."""
-        self.ros_publish_waypoint([0, 0])
+        self.ros_publish_waypoint([X_START, Y_START])
         self._enter_new_room()
-        self.wait_for_arrival([0, 0])
+        self.model.clear_image_embeddings()
+        self.wait_for_arrival([X_START, Y_START])
+        while len(self.model.hybrid_image_embeddings) == 0:
+            time.sleep(0.1)
         self.x, self.y, self.t = 0., 0., 0.
         self.start_time = time.time()
         return self.agent_observation()
@@ -144,9 +146,13 @@ class RandomRooms(gym.Env):
         """
         assert len(action) == 2
         label = self._get_label(action)
+        print('query: ', action)
+        print('label: ', label)
         model_err = self._get_model_improvement(label)
-        self.model.train_one_step(label)
-
+        self.model.train_classifier([self.x, self.y], label)
+        print('\n' + str(len(self.model.hybrid_image_embeddings)) + '\n')
+        
+        self.x, self.y, self.t = 0., 0., 0.
         while True:  # Travel to query destination in small steps
             dist_remain = self._get_distance(action)
             if dist_remain < self.img_interval:
@@ -161,7 +167,7 @@ class RandomRooms(gym.Env):
                 self.wait_for_arrival([next_x, next_y])
 
         self.t = time.time() - self.start_time
-        reward = model_err + self.x * self.y  # - self.time_weight * travel_time
+        reward = model_err  # - self.time_weight * travel_time
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
 
@@ -184,7 +190,7 @@ class RandomRooms(gym.Env):
     def _get_model_improvement(self, label, mode='gl'):
         """Heuristic metric for the improvement of the safe-mapper."""
         if mode == 'gl':
-            return self.model.gradlen(label)
+            return self.model.get_loss([self.x, self.y], label)
         elif mode == 'lcu':
             return self.model.uncertainty(label)
         else:
@@ -200,7 +206,8 @@ class RandomRooms(gym.Env):
         img = np.array(Image.frombuffer('RGB', (img_msg.width, img_msg.height),
                                         img_msg.data, 'raw', 'L', 0, 1))
         # Feed new image to LSTM
-        self.model.save_input([self.x, self.y], img)
+        print('Image received')
+        self.model.save_image_embedding([self.x, self.y], img)
 
     def ros_pose_callback(self, pose_msg):
         """Update internal position state."""
