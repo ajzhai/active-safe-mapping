@@ -112,7 +112,7 @@ class Classifier(nn.Module):
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        
         loss_function = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(self.parameters(), lr=0.001)
+        optimizer = torch.optim.SGD(self.parameters(), lr=0.01)
         pred = self.forward(y.to(device))
 #        target = torch.tensor(np.ones((1),dtype = long))
         loss = loss_function(pred, label.to(device))

@@ -13,15 +13,28 @@ from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
 import drone_classifier as dc
 
-X_MIN, X_MAX, Y_MIN, Y_MAX = -0.03, 5., -0.03, 5.
+X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 5.
 X_START, Y_START = X_MAX / 2, Y_MAX / 2
 Z = 3.
-MIN_WALL_DIST = 0.1
-DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.1, 0.1
+MIN_WALL_DIST = 0.3
+DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
 TABLES_PER_ROOM = 8
-SAFE_MAPPER_LATENT_DIM = 2004
 MAV_NAME = 'firefly'
+
+
+def make_grid_pool(grid_size):
+    """
+    Create a pool of room positions in an evenly-spaced grid.
+
+    :param grid_size: The distance between grid points
+    :return: List of [x, y] pairs
+    """
+    pool = []
+    for x in np.arange(X_MIN + grid_size / 2., X_MAX - grid_size / 2., grid_size):
+        for y in np.arange(Y_MIN + grid_size / 2., Y_MAX - grid_size / 2., grid_size):
+            pool.append([x, y])
+    return pool
 
 
 def random_table_centers(n_tables):
@@ -48,6 +61,8 @@ def random_table_centers(n_tables):
             new_y = TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - TABLE_Y_LENGTH)
         centers.append([new_x, new_y])
     return centers
+
+fixed_table_centers = random_table_centers(TABLES_PER_ROOM)
 
 class RandomRooms(gym.Env):
     """
@@ -85,7 +100,7 @@ class RandomRooms(gym.Env):
                                             high=np.array([X_MAX, Y_MAX]),
                                             dtype=np.float32),
                                         Box(low=-np.inf, high=np.inf,
-                                            shape=(SAFE_MAPPER_LATENT_DIM,),
+                                            shape=(len(self.model.latent_state()),),
                                             dtype=np.float32),
                                         Box(low=0, high=np.inf,
                                             shape=(1,), dtype=np.float32)))
@@ -106,6 +121,7 @@ class RandomRooms(gym.Env):
 
         # Spawn new tables
         table_centers = random_table_centers(TABLES_PER_ROOM)
+        table_centers = fixed_table_centers # TEMP#####################
         for i in range(TABLES_PER_ROOM):
             os.system("rosrun gazebo_ros spawn_model -database cafe_table -sdf " +
                       "-model table" + str(i) +
