@@ -13,8 +13,8 @@ from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
 import drone_classifier as dc
 
-X_MIN, X_MAX, Y_MIN, Y_MAX = 0., 5., 0., 5.
-X_START, Y_START = X_MAX / 2, Y_MAX / 2
+X_MIN, X_MAX, Y_MIN, Y_MAX = -2.5, 2.5, -2.5, 2.5
+X_START, Y_START = (X_MIN + X_MAX) / 2, (Y_MIN + Y_MAX) / 2
 Z = 3.
 MIN_WALL_DIST = 0.3
 DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
@@ -54,11 +54,11 @@ def random_table_centers(n_tables):
 
     centers = []
     for _ in range(n_tables):
-        new_x = TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - TABLE_X_LENGTH)
-        new_y = TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - TABLE_Y_LENGTH)
+        new_x = X_MIN + TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - X_MIN - TABLE_X_LENGTH)
+        new_y = Y_MIN + TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - Y_MIN - TABLE_Y_LENGTH)
         while is_overlap(centers, new_x, new_y):
-            new_x = TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - TABLE_X_LENGTH)
-            new_y = TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - TABLE_Y_LENGTH)
+            new_x = X_MIN + TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - X_MIN - TABLE_X_LENGTH)
+            new_y = Y_MIN + TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - Y_MIN - TABLE_Y_LENGTH)
         centers.append([new_x, new_y])
     return centers
 
@@ -129,7 +129,8 @@ class RandomRooms(gym.Env):
                       " -y " + str(table_centers[i][1]))
 
         # Calculate new true safe map
-        self.true_map = np.zeros((int(X_MAX * self.map_scale), int(Y_MAX * self.map_scale)))
+        self.true_map = np.zeros((int((X_MAX - X_MIN) * self.map_scale), 
+                                  int((Y_MAX - Y_MIN) * self.map_scale)))
         safe_x_extent = (TABLE_X_LENGTH - DRONE_X_LENGTH) / 2
         safe_y_extent = (TABLE_Y_LENGTH - DRONE_Y_LENGTH) / 2
         for x, y in table_centers:
@@ -192,8 +193,8 @@ class RandomRooms(gym.Env):
     def _get_label(self, action):
         """Get the true safe map label at the given position."""
         # Converting query position to pixel indices
-        x_idx = int(action[0] * self.map_scale)
-        y_idx = int(action[1] * self.map_scale)
+        x_idx = int((action[0] - X_MIN) * self.map_scale)
+        y_idx = int((action[1] - Y_MIN) * self.map_scale)
         return self.true_map[x_idx][y_idx]
 
     def _get_reward(self, action):
@@ -224,7 +225,6 @@ class RandomRooms(gym.Env):
         img = np.array(Image.frombuffer('RGB', (img_msg.width, img_msg.height),
                                         img_msg.data, 'raw', 'L', 0, 1))
         # Feed new image to LSTM
-        print('Image received')
         self.model.encode_input([self.x, self.y], img)
 
     def ros_pose_callback(self, pose_msg):
@@ -272,11 +272,12 @@ class RandomRooms(gym.Env):
         self.ready_for_img = True
 
     def save_model_performance(self):
-        total_loss = 0
+        """Calculates average error in current room and writes to file."""
+        total_loss = 0.
         for x in range(self.true_map.shape[0]):
             for y in range(self.true_map.shape[1]):
-                total_loss += self._get_model_improvement([(x + 0.5) / self.img_scale, 
-                                                           (y + 0.5) / self.img_scale],
-                                                          self.true_map[x][y])
-        with open(OUTPUT_FILE) as f:
-            f.write(str(total_loss / (self.true_map.shape[0] * self.true_map.shape[1])))
+                total_loss += self._get_model_improvement([(x + 0.5) / self.map_scale, 
+                                                           (y + 0.5) / self.map_scale],
+                                                          self._get_label([x, y])
+        with open(OUTPUT_FILE, 'a') as f:
+            f.write(str(total_loss / (self.true_map.shape[0] * self.true_map.shape[1])) + ' ')

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 import ray
 import rospy
 import os
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     tune.run(
         "PPO",
         resources_per_trial={
-            "cpu": 16,
+            "cpu": 10,
             "gpu": 0 
         },
         stop={
@@ -27,12 +27,12 @@ if __name__ == "__main__":
         },
         config={
             "env": RandomRooms,  # or "corridor" if registered above
-            "sample_batch_size": 128,
-            "train_batch_size": 128,
-            "sgd_minibatch_size": 128,
+            "sample_batch_size": 64,
+            "train_batch_size": 64,
+            "sgd_minibatch_size": 64,
             "lr": 1e-2,  # grid_search([1e-2, 1e-4, 1e-6]),  # try different lrs
             "num_workers": 0,  # parallelism
-            "num_cpus_per_worker": 16,
+            "num_cpus_per_worker": 10,
             "num_gpus": 0,
             "env_config": {
                 "map_scale": MAP_SCALE,
