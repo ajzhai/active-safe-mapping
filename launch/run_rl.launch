@@ -11,7 +11,7 @@
     <arg name="world_name" value="$(find safe_mapping)/resource/$(arg world_name).world" />
     <!-- <arg name="debug" value="true"/> -->
     <arg name="paused" value="true"/>
-    <arg name="gui" value="true"/>
+    <arg name="gui" value="false"/>
     <!-- <arg name="verbose" value="true"/> -->
   </include>
 

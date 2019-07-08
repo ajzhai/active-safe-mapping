@@ -21,7 +21,7 @@ DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
 TABLES_PER_ROOM = 8
 MAV_NAME = 'firefly'
-
+OUTPUT_FILE = '/home/azav/results/same_room_test.txt'
 
 def make_grid_pool(grid_size):
     """
@@ -140,6 +140,8 @@ class RandomRooms(gym.Env):
 
     def reset(self):
         """Called at the end of each episode(room) to enter a new room and reset position."""
+        if not isinstance(self.true_map, type(None)):
+            self.save_model_performance()
         self.ros_publish_waypoint([X_START, Y_START])
         self._enter_new_room()
         self.model.clear_image_embeddings()
@@ -223,7 +225,7 @@ class RandomRooms(gym.Env):
                                         img_msg.data, 'raw', 'L', 0, 1))
         # Feed new image to LSTM
         print('Image received')
-        self.model.save_image_embedding([self.x, self.y], img)
+        self.model.encode_input([self.x, self.y], img)
 
     def ros_pose_callback(self, pose_msg):
         """Update internal position state."""
@@ -268,3 +270,13 @@ class RandomRooms(gym.Env):
         while abs(self.x - 0.132646 - dest[0]) > tol or abs(self.y - dest[1]) > tol:
             time.sleep(check_freq)
         self.ready_for_img = True
+
+    def save_model_performance(self):
+        total_loss = 0
+        for x in range(self.true_map.shape[0]):
+            for y in range(self.true_map.shape[1]):
+                total_loss += self._get_model_improvement([(x + 0.5) / self.img_scale, 
+                                                           (y + 0.5) / self.img_scale],
+                                                          self.true_map[x][y])
+        with open(OUTPUT_FILE) as f:
+            f.write(str(total_loss / (self.true_map.shape[0] * self.true_map.shape[1])))

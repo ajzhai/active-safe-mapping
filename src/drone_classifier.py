@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 #import rospy
 #check-gpu
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 #pre-trained CNN model - Alexnet
 CNN = models.alexnet()
@@ -155,7 +155,7 @@ class Classifier(nn.Module):
     
     def train_classifier(self, x, label):
         
-        print(self.hybrid_image_embeddings)
+        #print(self.hybrid_image_embeddings)
         y = []
         y.append(float(x[0]))
         y.append(float(x[1]))
@@ -168,7 +168,7 @@ class Classifier(nn.Module):
         pred = self.forward(y.to(device))
 #        target = torch.tensor(np.ones((1),dtype = long))
         loss = loss_function(pred, label.to(device))
-        print(self.latent_state()) 
+        #print(self.latent_state()) 
         print(loss.data)#torch.tensor(1,dtype = torch.long))
         loss.backward(retain_graph = True)
         optimizer.step() 
