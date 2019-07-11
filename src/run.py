@@ -19,21 +19,21 @@ if __name__ == "__main__":
     tune.run(
         "PPO",
         resources_per_trial={
-            "cpu": 10,
-            "gpu": 0 
+            "cpu": 20,
+            "gpu": 1
         },
         stop={
-            "timesteps_total": 2048
+            "timesteps_total": 4096
         },
         config={
             "env": RandomRooms,  # or "corridor" if registered above
-            "sample_batch_size": 64,
-            "train_batch_size": 64,
-            "sgd_minibatch_size": 64,
-            "lr": 1e-2,  # grid_search([1e-2, 1e-4, 1e-6]),  # try different lrs
+            "sample_batch_size": 256,
+            "train_batch_size": 256,
+            "sgd_minibatch_size": 256,
+            "lr": 1e-3,  # grid_search([1e-2, 1e-4, 1e-6]),  # try different lrs
             "num_workers": 0,  # parallelism
             "num_cpus_per_worker": 10,
-            "num_gpus": 0,
+            "num_gpus": 1,
             "env_config": {
                 "map_scale": MAP_SCALE,
                 "time_weight": TIME_WEIGHT,

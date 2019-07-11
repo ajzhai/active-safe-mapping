@@ -57,7 +57,7 @@ class Classifier(nn.Module):
         self.encoding_embed1 = nn.Linear(int(CNN.classifier[-1].out_features),512)
         self.encoding_xy = nn.Linear(2, 256)
         self.encoding_hidden = nn.Linear(768,512)        
-
+        self.to(device)
 #Propogate through LSTM
     def forward(self, x):
         
@@ -77,8 +77,8 @@ class Classifier(nn.Module):
 #Propogate through classifier network
     def forward_2(self, x):
         #If there is no evolution of state
-        if self.embedding == None:
-            return(self.forward(x))
+#        if self.embedding == None:
+#            return(self.forward(x))
             
         x1 = F.relu(self.fc_xy1(x))
         embedding = torch.cat(self.embedding,2).squeeze(0)
@@ -90,7 +90,24 @@ class Classifier(nn.Module):
         y2 = (-self.final(y))
 
         return torch.cat((y1, y2),1)
+
+    def forward_2_batch(self, x):
+        #If there is no evolution of state
+#        if self.embedding == None:
+#            return(self.forward(x))
+            
+        x1 = F.relu(self.fc_xy1(x))
+        embedding = torch.cat(self.embedding,2).squeeze(0)
+        x2 = F.relu(self.fc_embed1(embedding))
         
+        x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
+        x = torch.cat((x2,x1),1)
+        y = F.relu(self.common_1(x))
+        y = F.relu(self.common_2(y))
+        y1 = (self.final(y))
+        y2 = (-self.final(y))
+
+        return torch.cat((y1, y2),1)
         
 
     def encode_input(self,xy,image):
@@ -115,39 +132,80 @@ class Classifier(nn.Module):
         self.hybrid_image_embeddings.append(F.relu(self.encoding_hidden(z)))
         
     def latent_state(self):
-        return(np.array(torch.cat(self.hidden,2).data.squeeze(0).squeeze(0)))
+        return(np.array(torch.cat(self.hidden,2).data.squeeze(0).squeeze(0).cpu()))
     
     def get_loss(self,x,label):
         
-        y = []
-        y.append(float(x[0]))
-        y.append(float(x[1]))
-        y=[y]
-        y=torch.tensor(y)
-        label = np.array([label], dtype = long)
-        label = torch.tensor(label)
-        loss_function = nn.CrossEntropyLoss()
-        pred = self.forward(y.to(device))
-        print(pred)
-#        target = torch.tensor(np.ones((1),dtype = long))
-        loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
-        return(float(np.array(loss.data)))
+        with torch.no_grad():
+            y = []
+            y.append(float(x[0]))
+            y.append(float(x[1]))
+            y=[y]
+            y=torch.tensor(y)
+            label = np.array([label], dtype = long)
+            label = torch.tensor(label)
+            loss_function = nn.CrossEntropyLoss()
+            pred = self.forward(y.to(device))
+            print(pred)
+    #        target = torch.tensor(np.ones((1),dtype = long))
+            loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
+            return(float(np.array(loss.data.cpu())))
+
+    def get_batch_loss(self,x,label):
         
+#        y = []
+#        y.append(float(x[0]))
+#        y.append(float(x[1]))
+#        y=[y]
+        with torch.no_grad():
+            y = np.array(x,dtype=np.float32)
+            y=torch.tensor(y)
+            loss_function = nn.CrossEntropyLoss()
+            pred = self.forward_2_batch(y.to(device))
+            label = np.array(label, dtype = long)
+            label = torch.tensor(label).t()
+    #        target = torch.tensor(np.ones((1),dtype = long))
+            loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
+            return(float(np.array(loss.data.cpu())))
+
+    def get_batch_confidence(self,x):
+        
+#        y = []
+#        y.append(float(x[0]))
+#        y.append(float(x[1]))
+#        y=[y]
+        with torch.no_grad():
+            y = np.array(x,dtype=np.float32)
+            y=torch.tensor(y)
+            pred = self.forward_2_batch(y.to(device))
+
+            return(np.array(torch.max(F.softmax(pred),1)[0].cpu()))
+
+    def get_batch_accuracy(self,x,labels):
+        
+        with torch.no_grad():
+            y = np.array(x,dtype=np.float32)
+            y=torch.tensor(y)
+            pred = self.forward_2_batch(y.to(device))            
+            temp = F.softmax(pred)[:,1]>0.5
+            correct = (np.array(temp.cpu()) == np.array(labels)) 
+            return(float(np.sum(correct))/len(correct))
+            
     def get_loss_evolved(self,x,label):
         
-        y = []
-        y.append(float(x[0]))
-        y.append(float(x[1]))
-        y=[y]
-        y=torch.tensor(y)
-        loss_function = nn.CrossEntropyLoss()
-        pred = self.forward_2(y)
-        print(pred)
-        label = np.array([label], dtype = long)
-        label = torch.tensor(label)       
-#        target = torch.tensor(np.ones((1),dtype = long))
-        loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
-        return(float(np.array(loss.data)))
+        with torch.no_grad():
+            y = []
+            y.append(float(x[0]))
+            y.append(float(x[1]))
+            y=[y]
+            y=torch.tensor(y)
+            loss_function = nn.CrossEntropyLoss()
+            pred = self.forward_2(y)
+            label = np.array([label], dtype = long)
+            label = torch.tensor(label)       
+    #        target = torch.tensor(np.ones((1),dtype = long))
+            loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
+            return(float(np.array(loss.data.cpu())))
 
     def clear_image_embeddings(self):
         
@@ -155,7 +213,6 @@ class Classifier(nn.Module):
     
     def train_classifier(self, x, label):
         
-        #print(self.hybrid_image_embeddings)
         y = []
         y.append(float(x[0]))
         y.append(float(x[1]))
@@ -164,23 +221,20 @@ class Classifier(nn.Module):
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        
         loss_function = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(self.parameters(), lr=0.01)
+        optimizer = torch.optim.SGD(self.parameters(), lr=0.001)
         pred = self.forward(y.to(device))
 #        target = torch.tensor(np.ones((1),dtype = long))
         loss = loss_function(pred, label.to(device))
-        #print(self.latent_state()) 
         print(loss.data)#torch.tensor(1,dtype = torch.long))
         loss.backward(retain_graph = True)
         optimizer.step() 
 
-#test script
 
 #D1 = Classifier(CNN)
-#D1.to(device)
 #for i in range(12):    
-#    #image = plt.imread('/home/abhi/pytorch_1/data/'+str(284+i*10)+'.jpg')
-#    image  = i*np.ones((480,752))    
-#    D1.encode_input([1.2,1.3],image)
+##    #image = plt.imread('/home/abhi/pytorch_1/data/'+str(284+i*10)+'.jpg')
+ #   image  = i*np.ones((480,752))    
+ #   D1.encode_input([1.2,1.3],image)
 
 #CNN(torch.tensor([[image]]).type(torch.FloatTensor).to(device))
 #'''D1.lstm(torch.cat(D1.image_embeddings).view(len(D1.image_embeddings), 1, -1),hidden)

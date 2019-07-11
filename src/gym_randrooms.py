@@ -19,9 +19,9 @@ Z = 3.
 MIN_WALL_DIST = 0.3
 DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
-TABLES_PER_ROOM = 8
+TABLES_PER_ROOM = 10
 MAV_NAME = 'firefly'
-OUTPUT_FILE = '/home/azav/results/same_room_test.txt'
+OUTPUT_FILE = '/home/azav/results/same_room_test2.txt'
 
 def make_grid_pool(grid_size):
     """
@@ -34,6 +34,18 @@ def make_grid_pool(grid_size):
     for x in np.arange(X_MIN + grid_size / 2., X_MAX - grid_size / 2., grid_size):
         for y in np.arange(Y_MIN + grid_size / 2., Y_MAX - grid_size / 2., grid_size):
             pool.append([x, y])
+    return pool
+
+def make_rand_pool(n_points):
+    """
+    Create a pool of room positions sampled uniformly randomly.
+
+    :param n_points: The size of the desired pool
+    :return: List of [x, y] pairs
+    """
+    pool = np.zeros((n_points, 2))
+    pool[:, 0] = np.random.rand(n_points) * (X_MAX - X_MIN) + X_MIN
+    pool[:, 1] = np.random.rand(n_points) * (Y_MAX - Y_MIN) + Y_MIN
     return pool
 
 
@@ -63,6 +75,7 @@ def random_table_centers(n_tables):
     return centers
 
 fixed_table_centers = random_table_centers(TABLES_PER_ROOM)
+fixed_pool =  make_rand_pool(10000)
 
 class RandomRooms(gym.Env):
     """
@@ -91,6 +104,7 @@ class RandomRooms(gym.Env):
         self.true_map = None
         #self._enter_new_room(True)
         #self.ros_publish_waypoint([0, 0])
+        self.ep_total_reward = 0.
         time.sleep(3.)
 
         self.action_space = Box(low=np.array([X_MIN + MIN_WALL_DIST, Y_MIN + MIN_WALL_DIST]), 
@@ -150,6 +164,7 @@ class RandomRooms(gym.Env):
         while len(self.model.hybrid_image_embeddings) == 0:
             time.sleep(0.1)
         self.x, self.y, self.t = 0., 0., 0.
+        self.ep_total_reward = 0.
         self.start_time = time.time()
         return self.agent_observation()
 
@@ -169,7 +184,7 @@ class RandomRooms(gym.Env):
         print('label: ', label)
         model_err = self._get_model_improvement(label)
         self.model.train_classifier([self.x, self.y], label)
-        print('\n' + str(len(self.model.hybrid_image_embeddings)) + '\n')
+        print('current room images: ' + str(len(self.model.hybrid_image_embeddings)) + '\n')
         
         self.x, self.y, self.t = 0., 0., 0.
         while True:  # Travel to query destination in small steps
@@ -187,6 +202,7 @@ class RandomRooms(gym.Env):
 
         self.t = time.time() - self.start_time
         reward = model_err  # - self.time_weight * travel_time
+        self.ep_total_reward += reward
         done = self.t >= self.ep_len
         return self.agent_observation(), reward, done, {}
 
@@ -273,11 +289,12 @@ class RandomRooms(gym.Env):
 
     def save_model_performance(self):
         """Calculates average error in current room and writes to file."""
-        total_loss = 0.
-        for x in range(self.true_map.shape[0]):
-            for y in range(self.true_map.shape[1]):
-                total_loss += self._get_model_improvement([(x + 0.5) / self.map_scale, 
-                                                           (y + 0.5) / self.map_scale],
-                                                          self._get_label([x, y])
+        preds = []
+        for pos in fixed_pool:
+            preds.append(self._get_label(pos))
+        print('safe fraction: %d/%d' % (np.sum(preds), len(preds)))
+        loss = self.model.get_batch_loss(fixed_pool, preds)
+        conf = np.mean(self.model.get_batch_confidence(fixed_pool))
+        acc = self.model.get_batch_accuracy(fixed_pool, preds)
         with open(OUTPUT_FILE, 'a') as f:
-            f.write(str(total_loss / (self.true_map.shape[0] * self.true_map.shape[1])) + ' ')
+            f.write('%f %f %f %f\n' % (acc, loss, conf, self.ep_total_reward))
