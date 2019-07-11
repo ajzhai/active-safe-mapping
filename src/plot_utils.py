@@ -1,4 +1,5 @@
 import numpy as np
+import json
 import matplotlib.pyplot as plt
 
 PATH_TO_DATA = '/home/azhai/Documents/safe_mapping/histories/'
@@ -38,6 +39,20 @@ def add_new_strategy(datafile, name, avgs, stds, names, bin_size=1):
     avgs.append(avg_history)
     stds.append(std_history)
     names.append(name)
+
+def plot_reward_history(result_file, title, outfile):
+    hist = []
+    with open(result_file) as f:
+        for line in f:
+            data = json.loads(line)  # JSON dictionary
+            hist.append(data['episode_reward_mean'])
+    plt.plot(range(1, len(hist) + 1), hist)
+    plt.xlabel('# of Episodes')
+    plt.ylabel('Episode Reward')
+    plt.title(title)
+    plt.savefig(outfile)
+    plt.close()
+
 
 if __name__ == '__main__':
     avgs, stds, names = [], [], []

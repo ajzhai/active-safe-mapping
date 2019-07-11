@@ -5,6 +5,7 @@ import os
 from ray import tune
 from ray.tune import grid_search
 from gym_randrooms import RandomRooms
+from policy_model import BalancedInputFC
 
 MAP_SCALE = 100  # pixels per position unit
 TIME_WEIGHT = 0.2
@@ -40,5 +41,9 @@ if __name__ == "__main__":
                 "ep_length": EPISODE_LENGTH,
                 "img_interval": IMG_INTERVAL
             },
+            "model": {
+                "custom_model": BalancedInputFC,
+                "constrain_outputs": [2.2, 0.5, 2.2, 0.5]
+            }
         },
     )
