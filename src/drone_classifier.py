@@ -15,12 +15,6 @@ import torch.nn.functional as F
 #check-gpu
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-#pre-trained CNN model - Alexnet
-CNN = models.alexnet()
-CNN.features[0] = nn.Conv2d(1, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
-for child in CNN.children():
-    for param in child.parameters():
-        param.requires_grad =False
 #pre-trained CNN model - MobileNetV2 on ImageNet
 CNN = models.mobilenet_v2(pretrained=True)
 CNN.to(device)
