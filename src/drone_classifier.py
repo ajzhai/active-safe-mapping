@@ -18,45 +18,41 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #pre-trained CNN model - Alexnet
 CNN = models.alexnet()
 CNN.features[0] = nn.Conv2d(1, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
-CNN.to(device)
-#pre-trained CNN model - 
-#CNN = models.inc()
-#CNN.Conv2d_1a_3x3 = models.inception.BasicConv2d(1, 32, kernel_size=3, stride=2)
-
 for child in CNN.children():
     for param in child.parameters():
         param.requires_grad =False
+#pre-trained CNN model - MobileNetV2 on ImageNet
+CNN = models.mobilenet_v2(pretrained=True)
+CNN.to(device)
 
-        
 class Classifier(nn.Module):
-
 
     def __init__(self ,trained_CNN=CNN):
         
         super(Classifier, self).__init__()
         self.counter = 0
         self.hidden_rep_dim = 512
-        self.input_fetaure_dim = 512
+        self.input_feature_dim = 128
         #pretrained CNN
         self.CNN = trained_CNN
         #LSTM random initialization
-        self.lstm = nn.LSTM(self.hidden_rep_dim,self.input_fetaure_dim)        
+        self.lstm = nn.LSTM(self.input_feature_dim, self.hidden_rep_dim)        
+        self.word_lstm_init_h = nn.Parameter(torch.randn(1, 1, self.hidden_rep_dim).type(torch.FloatTensor), requires_grad=True)
+        self.word_lstm_init_c = nn.Parameter(torch.randn(1, 1, self.hidden_rep_dim).type(torch.FloatTensor), requires_grad=True)
+        self.hidden = (self.word_lstm_init_h,self.word_lstm_init_c)        
         self.embedding = None
         #Classifier Network
-        self.fc_embed1 = nn.Linear(1024, 120)  
-        self.fc_xy1 = nn.Linear(2,10)
+        self.fc_embed1 = nn.Linear(1024, 250)  
+        self.fc_xy1 = nn.Linear(2, 50)
 #        self.image_embeddings = []
         self.hybrid_image_embeddings = []
         self.xy = []
-        self.common_1 = nn.Linear(130, 84)
+        self.common_1 = nn.Linear(300, 84)
         self.common_2 = nn.Linear(84,16)
-        self.word_lstm_init_h = nn.Parameter(torch.randn(1, 1, self.input_fetaure_dim).type(torch.FloatTensor), requires_grad=True)
-        self.word_lstm_init_c = nn.Parameter(torch.randn(1, 1, self.hidden_rep_dim).type(torch.FloatTensor), requires_grad=True)
-        self.hidden = (self.word_lstm_init_h,self.word_lstm_init_c)        
         self.final = nn.Linear(16,1)
-        self.encoding_embed1 = nn.Linear(int(CNN.classifier[-1].out_features),512)
-        self.encoding_xy = nn.Linear(2, 256)
-        self.encoding_hidden = nn.Linear(768,512)        
+        self.encoding_embed1 = nn.Linear(int(CNN.classifier[-1].out_features), 256)
+        self.encoding_xy = nn.Linear(2, 64)
+        self.encoding_hybrid = nn.Linear(320, self.input_feature_dim)        
         self.to(device)
 #Propogate through LSTM
     def forward(self, x):
@@ -112,10 +108,7 @@ class Classifier(nn.Module):
 
     def encode_input(self,xy,image):
         
-        xy_new = []
-        xy_new.append(float(xy[0]))
-        xy_new.append(float(xy[1]))
-        xy = [xy_new]
+        xy = [float(xy[0]), float(xy[1])]
         xy = torch.tensor(xy)
         self.counter += 1
 #        rospy.loginfo(rospy.get_caller_id())
@@ -129,7 +122,7 @@ class Classifier(nn.Module):
         xy = self.encoding_xy(xy)
         xy = F.relu(xy)
         z = torch.cat((image,xy),1)
-        self.hybrid_image_embeddings.append(F.relu(self.encoding_hidden(z)))
+        self.hybrid_image_embeddings.append(F.relu(self.encoding_hybrid(z)))
         
     def latent_state(self):
         return(np.array(torch.cat(self.hidden,2).data.squeeze(0).squeeze(0).cpu()))
@@ -137,10 +130,7 @@ class Classifier(nn.Module):
     def get_loss(self,x,label):
         
         with torch.no_grad():
-            y = []
-            y.append(float(x[0]))
-            y.append(float(x[1]))
-            y=[y]
+            y = [float(x[0]), float(x[1])]
             y=torch.tensor(y)
             label = np.array([label], dtype = long)
             label = torch.tensor(label)
@@ -152,11 +142,8 @@ class Classifier(nn.Module):
             return(float(np.array(loss.data.cpu())))
 
     def get_batch_loss(self,x,label):
-        
-#        y = []
-#        y.append(float(x[0]))
-#        y.append(float(x[1]))
-#        y=[y]
+          
+        #   y = [float(x[0]), float(x[1])]
         with torch.no_grad():
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
@@ -170,10 +157,7 @@ class Classifier(nn.Module):
 
     def get_batch_confidence(self,x):
         
-#        y = []
-#        y.append(float(x[0]))
-#        y.append(float(x[1]))
-#        y=[y]
+        #   y = [float(x[0]), float(x[1])]
         with torch.no_grad():
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
@@ -194,10 +178,7 @@ class Classifier(nn.Module):
     def get_loss_evolved(self,x,label):
         
         with torch.no_grad():
-            y = []
-            y.append(float(x[0]))
-            y.append(float(x[1]))
-            y=[y]
+            y = [float(x[0]), float(x[1])]
             y=torch.tensor(y)
             loss_function = nn.CrossEntropyLoss()
             pred = self.forward_2(y)
@@ -213,10 +194,8 @@ class Classifier(nn.Module):
     
     def train_classifier(self, x, label):
         
-        y = []
-        y.append(float(x[0]))
-        y.append(float(x[1]))
-        y=[y]
+        
+        y = [float(x[0]), float(x[1])]
         y=torch.tensor(y)
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        

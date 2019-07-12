@@ -4,6 +4,7 @@ import time
 import random
 import rospy
 import tf
+import cv2
 import matplotlib.pyplot as plt
 import gym
 from gym.spaces import Tuple, Box
@@ -237,9 +238,12 @@ class RandomRooms(gym.Env):
             return
         self.ready_for_img = False
 
-        # Convert to grayscale array
+        # Convert to 256x256 grayscale array
         img = np.array(Image.frombuffer('RGB', (img_msg.width, img_msg.height),
-                                        img_msg.data, 'raw', 'L', 0, 1))
+                                        img_msg.data, 'raw', 'RGB', 0, 1))
+        cropped_start_idx = img.shape[1]/2 - img.shape[0]/2  # crop the width
+        img = cv2.resize(img[:, cropped_start_idx:cropped_start_idx + img.shape[0]], (256, 256))
+
         # Feed new image to LSTM
         self.model.encode_input([self.x, self.y], img)
 
