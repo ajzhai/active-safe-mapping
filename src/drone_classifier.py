@@ -114,8 +114,9 @@ class Classifier(nn.Module):
     def forward_2_batch(self, x):
             
         x1 = F.relu(self.fc_xy1(x))
-        embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding))
+        #embedding = torch.cat(self.embedding,2).squeeze(0)
+        embedding = torch.zeros((1, 1024))
+        x2 = F.relu(self.fc_embed1(embedding.to(device))
         
         x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
         x = torch.cat((x2,x1),1)
@@ -151,21 +152,19 @@ class Classifier(nn.Module):
         y=torch.tensor(y)
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        
-        loss_function = nn.CrossEntropyLoss()
+        loss_function = nn.BCELoss()
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         
-        x1 = F.relu(self.fc_xy1(y))
-        embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding))
+        x1 = F.relu(self.fc_xy1(y.to(device)))
+        #embedding = torch.cat(self.embedding,2).squeeze(0)
+        embedding = torch.zeros((1, 1024))
+        x2 = F.relu(self.fc_embed1(embedding.to(device)))
         x = torch.cat((x2,x1),1)
         y = F.relu(self.common_1(x))
         y = F.relu(self.common_2(y))
         y1 = (self.final(y))
-        y2 = (-self.final(y))
-        
-        
-        pred = torch.cat((y1,y2),1)
-        loss = loss_function(pred, label.to(device))
+        y1 = F.sigmoid(y1)
+        loss = loss_function(y1, label.to(device))
         print(loss.data)#torch.tensor(1,dtype = torch.long))
         loss.backward(retain_graph = True)
         optimizer.step()
@@ -377,6 +376,7 @@ print(table_centers)
 print(np.sum(true_map))
 
 clf = Classifier()
-for i in range(len(fixed_pool)):
+for i in range(len(fixed_pool) / 1000):
+    if i % 100 == 0: print(i)
     clf.train_final_network(fixed_pool[i], preds[i])
 print(clf.get_batch_accuracy(fixed_pool, preds))
