@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 #import rospy
 #check-gpu
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 #pre-trained CNN model - MobileNetV2 on ImageNet
 CNN = models.mobilenet_v2(pretrained=True)
@@ -27,18 +27,22 @@ class Classifier(nn.Module):
         self.counter = 0
         self.hidden_rep_dim = 512
         self.input_feature_dim = 128
+####        self.counter_label_list = []
+
         #pretrained CNN
         self.CNN = trained_CNN
         #LSTM random initialization
         self.lstm = nn.LSTM(self.input_feature_dim, self.hidden_rep_dim)        
         self.word_lstm_init_h = nn.Parameter(torch.randn(1, 1, self.hidden_rep_dim).type(torch.FloatTensor), requires_grad=True)
         self.word_lstm_init_c = nn.Parameter(torch.randn(1, 1, self.hidden_rep_dim).type(torch.FloatTensor), requires_grad=True)
+        #learnable initial hidden state
         self.hidden = (self.word_lstm_init_h,self.word_lstm_init_c)        
+        #latest evolved hidden state
         self.embedding = None
         #Classifier Network
         self.fc_embed1 = nn.Linear(1024, 250)  
         self.fc_xy1 = nn.Linear(2, 50)
-#        self.image_embeddings = []
+        #self.image_embeddings = []
         self.hybrid_image_embeddings = []
         self.xy = []
         self.common_1 = nn.Linear(300, 84)
@@ -48,6 +52,8 @@ class Classifier(nn.Module):
         self.encoding_xy = nn.Linear(2, 64)
         self.encoding_hybrid = nn.Linear(320, self.input_feature_dim)        
         self.to(device)
+####        self.prev_room_data = []
+
 #Propogate through LSTM
     def forward(self, x):
         
@@ -63,7 +69,31 @@ class Classifier(nn.Module):
         y2 = (-self.final(y))
 
         return torch.cat((y1, y2),1)
+### untested function`
+    def forward_batch(self, Data, x):
+        #If there is no evolution of state
+#        if self.embedding == None:
+#            return(self.forward(x))
         
+        x1 = F.relu(self.fc_xy1(x))
+        hidden_1 = torch.cat([self.hidden[0]]*4,1)
+        hidden_2 = torch.cat([self.hidden[1]]*4,1)        
+#        embedding = torch.cat(self.embedding,2).squeeze(0)
+        _, embedding = self.lstm(Data,(hidden_1,hidden_2))
+        
+        x2 = F.relu(self.fc_embed1(embedding))
+
+        print(x2.shape,x1.shape)
+        
+#        x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
+        x = torch.cat((x2[0],x1[0]),1)
+        y = F.relu(self.common_1(x))
+        y = F.relu(self.common_2(y))
+        y1 = (self.final(y))
+        y2 = (-self.final(y))
+
+        return torch.cat((y1, y2),1)
+
 #Propogate through classifier network
     def forward_2(self, x):
         #If there is no evolution of state
@@ -82,9 +112,6 @@ class Classifier(nn.Module):
         return torch.cat((y1, y2),1)
 
     def forward_2_batch(self, x):
-        #If there is no evolution of state
-#        if self.embedding == None:
-#            return(self.forward(x))
             
         x1 = F.relu(self.fc_xy1(x))
         embedding = torch.cat(self.embedding,2).squeeze(0)
@@ -102,13 +129,11 @@ class Classifier(nn.Module):
 
     def encode_input(self,xy,image):
         
-        xy = [float(xy[0]), float(xy[1])]
+        xy = [[float(xy[0]), float(xy[1])]]
         xy = torch.tensor(xy)
         self.counter += 1
-#        rospy.loginfo(rospy.get_caller_id())
-#        image = imgmsg_to_grayscale_array(image)        
         image =torch.tensor(image, device=device).float()
-        image = image.unsqueeze(0).unsqueeze(0)  
+        image = image.unsqueeze(0) 
         image = image.to(device)
         xy  = xy.to(device)
         image = self.encoding_embed1(self.CNN(image))
@@ -117,27 +142,57 @@ class Classifier(nn.Module):
         xy = F.relu(xy)
         z = torch.cat((image,xy),1)
         self.hybrid_image_embeddings.append(F.relu(self.encoding_hybrid(z)))
+
+##test scripts
+    def train_final_network(self,x,label):
         
+        y = [[float(x[0]), float(x[1])]]
+        
+        y=torch.tensor(y)
+        label = np.array([label], dtype = long)
+        label = torch.tensor(label)        
+        loss_function = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        
+        x1 = F.relu(self.fc_xy1(y))
+        embedding = torch.cat(self.embedding,2).squeeze(0)
+        x2 = F.relu(self.fc_embed1(embedding))
+        x = torch.cat((x2,x1),1)
+        y = F.relu(self.common_1(x))
+        y = F.relu(self.common_2(y))
+        y1 = (self.final(y))
+        y2 = (-self.final(y))
+        
+        
+        pred = torch.cat((y1,y2),1)
+        loss = loss_function(pred, label.to(device))
+        print(loss.data)#torch.tensor(1,dtype = torch.long))
+        loss.backward(retain_graph = True)
+        optimizer.step()
+
+
+
+       
+
+
     def latent_state(self):
         return(np.array(torch.cat(self.hidden,2).data.squeeze(0).squeeze(0).cpu()))
     
     def get_loss(self,x,label):
         
         with torch.no_grad():
-            y = [float(x[0]), float(x[1])]
+            y = [[float(x[0]), float(x[1])]]
             y=torch.tensor(y)
             label = np.array([label], dtype = long)
             label = torch.tensor(label)
             loss_function = nn.CrossEntropyLoss()
             pred = self.forward(y.to(device))
             print(pred)
-    #        target = torch.tensor(np.ones((1),dtype = long))
             loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
             return(float(np.array(loss.data.cpu())))
 
     def get_batch_loss(self,x,label):
           
-        #   y = [float(x[0]), float(x[1])]
         with torch.no_grad():
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
@@ -145,13 +200,11 @@ class Classifier(nn.Module):
             pred = self.forward_2_batch(y.to(device))
             label = np.array(label, dtype = long)
             label = torch.tensor(label).t()
-    #        target = torch.tensor(np.ones((1),dtype = long))
             loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
             return(float(np.array(loss.data.cpu())))
 
     def get_batch_confidence(self,x):
         
-        #   y = [float(x[0]), float(x[1])]
         with torch.no_grad():
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
@@ -172,37 +225,71 @@ class Classifier(nn.Module):
     def get_loss_evolved(self,x,label):
         
         with torch.no_grad():
-            y = [float(x[0]), float(x[1])]
+            y = [[float(x[0]), float(x[1])]]
             y=torch.tensor(y)
             loss_function = nn.CrossEntropyLoss()
             pred = self.forward_2(y)
             label = np.array([label], dtype = long)
             label = torch.tensor(label)       
-    #        target = torch.tensor(np.ones((1),dtype = long))
             loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
             return(float(np.array(loss.data.cpu())))
 
     def clear_image_embeddings(self):
-        
+        self.counter = 0
+    ####     self.prev_room_data.append([self.hybrid_image_embeddings,self.counter_label_list])       
+    ####     print(len(self.prev_room_data))
         self.hybrid_image_embeddings = []
+    ####    self.counter_label_list = []       
     
     def train_classifier(self, x, label):
         
-        
-        y = [float(x[0]), float(x[1])]
+    ###    self.counter_label_list.append([self.counter,label,self.xy])
+    ###    print(len(self.counter_label_list))
+        y = [[float(x[0]), float(x[1])]]
         y=torch.tensor(y)
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        
         loss_function = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(self.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         pred = self.forward(y.to(device))
-#        target = torch.tensor(np.ones((1),dtype = long))
         loss = loss_function(pred, label.to(device))
         print(loss.data)#torch.tensor(1,dtype = torch.long))
         loss.backward(retain_graph = True)
-        optimizer.step() 
+        optimizer.step()
 
 
+
+#   untested function
+    def train_classifier_prev(self):
+        # pointer to the data
+        for i in range(min(5,len(self.hybrid_image_embeddings))):  
+            x,y = self.prev_room_data[(len(self.hybrid_image_embeddings)-i)]
+            max_length = y[-1][0]
+            N = len(y)
+            Data = torch.zeros(N,max_length,512)
+            Data_lengths = []
+            xy_list = []
+            labels = []
+        # data is copied
+            
+            for j,info in enumerate(y[::-1]):
+                Data[j][0:info[0]] = x[0:info[0]]
+                Data_lengths.append(info[0])
+                labels.append(info[1])
+                xy_list.append(info[2])
+            xy_list = torch.tensor(xy_list)
+            labels = torch.tensor(labels)
+            Data_lengths = torch.tensor(Data_lengths)
+            loss_function = nn.CrossEntropyLoss()            
+            Data = torch.nn.utils.rnn.pack_padded_sequence(Data, Data_lengths, batch_first=True)
+            pred = self.forward_batch(Data.to(device), xy_list)    
+            label = torch.tensor(label).t()
+            print(label,label.shape)
+    #        target = torch.tensor(np.ones((1),dtype = long))
+            loss = loss_function(pred, label.to(device))#torch.tensor(1,dtype = torch.long))
+            loss.backward(retain_graph = True)
+            optimizer = torch.optim.SGD(self.parameters(), lr=0.01)
+            optimizer.step() 
 #D1 = Classifier(CNN)
 #for i in range(12):    
 ##    #image = plt.imread('/home/abhi/pytorch_1/data/'+str(284+i*10)+'.jpg')

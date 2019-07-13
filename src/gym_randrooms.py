@@ -245,7 +245,7 @@ class RandomRooms(gym.Env):
         img = cv2.resize(img[:, cropped_start_idx:cropped_start_idx + img.shape[0]], (256, 256))
 
         # Feed new image to LSTM
-        self.model.encode_input([self.x, self.y], img)
+        self.model.encode_input([self.x, self.y], img.T)
 
     def ros_pose_callback(self, pose_msg):
         """Update internal position state."""

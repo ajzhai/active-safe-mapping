@@ -4,6 +4,7 @@ import rospy
 import os
 from ray import tune
 from ray.tune import grid_search
+from ray.rllib.models import ModelCatalog
 from gym_randrooms import RandomRooms
 from policy_model import BalancedInputFC
 
@@ -17,11 +18,12 @@ if __name__ == "__main__":
     rospy.init_node('reinforcement_learner', anonymous=True)
     rospy.sleep(10.)
     ray.init()
+    ModelCatalog.register_custom_model("my_model", BalancedInputFC)
     tune.run(
         "PPO",
         resources_per_trial={
             "cpu": 20,
-            "gpu": 1
+            "gpu": 4
         },
         stop={
             "timesteps_total": 4096
@@ -42,8 +44,10 @@ if __name__ == "__main__":
                 "img_interval": IMG_INTERVAL
             },
             "model": {
-                "custom_model": BalancedInputFC,
-                "constrain_outputs": [2.2, 0.5, 2.2, 0.5]
+                "custom_model": "my_model",
+                "custom_options": {
+                    "constrain_outputs": [0., 0., 0., 0.]
+                 }
             }
         },
     )
