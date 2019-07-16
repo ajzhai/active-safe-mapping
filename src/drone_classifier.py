@@ -114,10 +114,8 @@ class Classifier(nn.Module):
     def forward_2_batch(self, x):
             
         x1 = F.relu(self.fc_xy1(x))
-        #embedding = torch.cat(self.embedding,2).squeeze(0)
-        embedding = torch.zeros((1, 1024))
-        x2 = F.relu(self.fc_embed1(embedding.to(device))
-        
+        embedding = torch.cat(self.embedding,2).squeeze(0)
+        x2 = F.relu(self.fc_embed1(embedding.to(device)))
         x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
         x = torch.cat((x2,x1),1)
         y = F.relu(self.common_1(x))
@@ -156,8 +154,7 @@ class Classifier(nn.Module):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         
         x1 = F.relu(self.fc_xy1(y.to(device)))
-        #embedding = torch.cat(self.embedding,2).squeeze(0)
-        embedding = torch.zeros((1, 1024))
+        embedding = torch.cat(self.embedding,2).squeeze(0)
         x2 = F.relu(self.fc_embed1(embedding.to(device)))
         x = torch.cat((x2,x1),1)
         y = F.relu(self.common_1(x))
@@ -306,77 +303,3 @@ class Classifier(nn.Module):
 #        B = j.grad
 #a
 
-X_MIN, X_MAX, Y_MIN, Y_MAX = -2.5, 2.5, -2.5, 2.5
-X_START, Y_START = (X_MIN + X_MAX) / 2, (Y_MIN + Y_MAX) / 2
-Z = 3.
-MIN_WALL_DIST = 0.3
-DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
-TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
-TABLES_PER_ROOM = 10
-MAV_NAME = 'firefly'
-
-def make_rand_pool(n_points):
-    """
-    Create a pool of room positions sampled uniformly randomly.
-
-    :param n_points: The size of the desired pool
-    :return: List of [x, y] pairs
-    """
-    pool = np.zeros((n_points, 2))
-    pool[:, 0] = np.random.rand(n_points) * (X_MAX - X_MIN) + X_MIN
-    pool[:, 1] = np.random.rand(n_points) * (Y_MAX - Y_MIN) + Y_MIN
-    return pool
-
-def random_table_centers(n_tables):
-    """
-    Generate random table center locations within the bounds of the room and not
-    overlapping with each other.
-
-    :param n_tables: The number of table centers to generate
-    :return: The table centers in a list of [x, y] pairs
-    """
-    def is_overlap(centers, new_x, new_y):
-        overlap = False
-        for x, y in centers:
-            if abs(x - new_x) < TABLE_X_LENGTH and abs(y - new_y) < TABLE_Y_LENGTH:
-                overlap = True
-        return overlap
-
-    centers = []
-    for _ in range(n_tables):
-        new_x = X_MIN + TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - X_MIN - TABLE_X_LENGTH)
-        new_y = Y_MIN + TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - Y_MIN - TABLE_Y_LENGTH)
-        while is_overlap(centers, new_x, new_y):
-            new_x = X_MIN + TABLE_X_LENGTH / 2 + np.random.rand() * (X_MAX - X_MIN - TABLE_X_LENGTH)
-            new_y = Y_MIN + TABLE_Y_LENGTH / 2 + np.random.rand() * (Y_MAX - Y_MIN - TABLE_Y_LENGTH)
-        centers.append([new_x, new_y])
-    return centers
-
-def get_label(true_map, action, map_scale):
-    # Converting query position to pixel indices
-    x_idx = int((action[0] - X_MIN) * map_scale)
-    y_idx = int((action[1] - Y_MIN) * map_scale)
-    return true_map[x_idx][y_idx]
-
-map_scale = 100
-table_centers = random_table_centers(TABLES_PER_ROOM)
-fixed_pool = make_rand_pool(10000)
-true_map = np.zeros((int((X_MAX - X_MIN) * map_scale),  int((Y_MAX - Y_MIN) * map_scale)))
-safe_x_extent = (TABLE_X_LENGTH - DRONE_X_LENGTH) / 2
-safe_y_extent = (TABLE_Y_LENGTH - DRONE_Y_LENGTH) / 2
-for x, y in table_centers:
-    x, y = x - X_MIN, y - Y_MIN
-    true_map[int((x-safe_x_extent)*100):int((x+safe_x_extent)*100),
-             int((y - safe_y_extent) * 100):int((y + safe_y_extent) * 100)] = 1
-
-preds = []
-for pos in fixed_pool:
-    preds.append(get_label(true_map, pos, 100))
-print(table_centers)
-print(np.sum(true_map))
-
-clf = Classifier()
-for i in range(len(fixed_pool) / 1000):
-    if i % 100 == 0: print(i)
-    clf.train_final_network(fixed_pool[i], preds[i])
-print(clf.get_batch_accuracy(fixed_pool, preds))
