@@ -40,14 +40,21 @@ class Classifier(nn.Module):
         #latest evolved hidden state
         self.embedding = None
         #Classifier Network
-        self.fc_embed1 = nn.Linear(1024, 250)  
-        self.fc_xy1 = nn.Linear(2, 50)
+        self.fc_hc1 = nn.Linear(1024, 512)
+        self.fc_xy1 = nn.Linear(2, 128)
         #self.image_embeddings = []
         self.hybrid_image_embeddings = []
         self.xy = []
-        self.common_1 = nn.Linear(300, 84)
-        self.common_2 = nn.Linear(84,16)
-        self.final = nn.Linear(16,1)
+        self.common_1 = nn.Linear(640, 256)
+        self.common_1_bn = nn.BatchNorm1d(256)
+        self.common_2 = nn.Linear(256, 128)
+        self.common_2_bn = nn.BatchNorm1d(128)
+        self.common_3 = nn.Linear(128, 64)
+        self.common_3_bn = nn.BatchNorm1d(64)
+        self.common_4 = nn.Linear(64, 32)
+        self.common_4_bn = nn.BatchNorm1d(32)
+        self.final = nn.Linear(32, 1)
+
         self.encoding_embed1 = nn.Linear(int(CNN.classifier[-1].out_features), 256)
         self.encoding_xy = nn.Linear(2, 64)
         self.encoding_hybrid = nn.Linear(320, self.input_feature_dim)        
@@ -61,10 +68,12 @@ class Classifier(nn.Module):
         _ , self.embedding = self.lstm(lstm_input,self.hidden)
         x1 = F.relu(self.fc_xy1(x))
         embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding))
-        x = torch.cat((x2,x1),1)
-        y = F.relu(self.common_1(x))
-        y = F.relu(self.common_2(y))
+        x2 = F.relu(self.fc_hc1(embedding))
+        x = torch.cat((x2, x1), 1)
+        y = F.relu(self.common_1_bn(self.common_1(x)))
+        y = F.relu(self.common_2_bn(self.common_2(y)))
+        y = F.relu(self.common_3_bn(self.common_3(y)))
+        y = F.relu(self.common_4_bn(self.common_4(y)))
         y1 = (self.final(y))
         y2 = (-self.final(y))
 
@@ -81,14 +90,16 @@ class Classifier(nn.Module):
 #        embedding = torch.cat(self.embedding,2).squeeze(0)
         _, embedding = self.lstm(Data,(hidden_1,hidden_2))
         
-        x2 = F.relu(self.fc_embed1(embedding))
+        x2 = F.relu(self.fc_hc1(embedding))
 
         print(x2.shape,x1.shape)
         
 #        x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
         x = torch.cat((x2[0],x1[0]),1)
-        y = F.relu(self.common_1(x))
-        y = F.relu(self.common_2(y))
+        y = F.relu(self.common_1_bn(self.common_1(x)))
+        y = F.relu(self.common_2_bn(self.common_2(y)))
+        y = F.relu(self.common_3_bn(self.common_3(y)))
+        y = F.relu(self.common_4_bn(self.common_4(y)))
         y1 = (self.final(y))
         y2 = (-self.final(y))
 
@@ -102,10 +113,12 @@ class Classifier(nn.Module):
             
         x1 = F.relu(self.fc_xy1(x))
         embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding))
+        x2 = F.relu(self.fc_hc1(embedding))
         x = torch.cat((x2,x1),1)
-        y = F.relu(self.common_1(x))
-        y = F.relu(self.common_2(y))
+        y = F.relu(self.common_1_bn(self.common_1(x)))
+        y = F.relu(self.common_2_bn(self.common_2(y)))
+        y = F.relu(self.common_3_bn(self.common_3(y)))
+        y = F.relu(self.common_4_bn(self.common_4(y)))
         y1 = (self.final(y))
         y2 = (-self.final(y))
 
@@ -115,11 +128,13 @@ class Classifier(nn.Module):
             
         x1 = F.relu(self.fc_xy1(x))
         embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding.to(device)))
+        x2 = F.relu(self.fc_hc1(embedding.to(device)))
         x2 = torch.repeat_interleave(x2,x1.shape[0]).reshape([x2.shape[1],x1.shape[0]]).t()
         x = torch.cat((x2,x1),1)
-        y = F.relu(self.common_1(x))
-        y = F.relu(self.common_2(y))
+        y = F.relu(self.common_1_bn(self.common_1(x)))
+        y = F.relu(self.common_2_bn(self.common_2(y)))
+        y = F.relu(self.common_3_bn(self.common_3(y)))
+        y = F.relu(self.common_4_bn(self.common_4(y)))
         y1 = (self.final(y))
         y2 = (-self.final(y))
 
@@ -144,9 +159,9 @@ class Classifier(nn.Module):
 
 ##test scripts
     def train_final_network(self,x,label):
-        
+
+        self.train()
         y = [[float(x[0]), float(x[1])]]
-        
         y=torch.tensor(y)
         label = np.array([label], dtype = long)
         label = torch.tensor(label)        
@@ -155,10 +170,12 @@ class Classifier(nn.Module):
         
         x1 = F.relu(self.fc_xy1(y.to(device)))
         embedding = torch.cat(self.embedding,2).squeeze(0)
-        x2 = F.relu(self.fc_embed1(embedding.to(device)))
+        x2 = F.relu(self.fc_hc1(embedding.to(device)))
         x = torch.cat((x2,x1),1)
-        y = F.relu(self.common_1(x))
-        y = F.relu(self.common_2(y))
+        y = F.relu(self.common_1_bn(self.common_1(x)))
+        y = F.relu(self.common_2_bn(self.common_2(x)))
+        y = F.relu(self.common_3_bn(self.common_3(x)))
+        y = F.relu(self.common_4_bn(self.common_4(x)))
         y1 = (self.final(y))
         y1 = F.sigmoid(y1)
         loss = loss_function(y1, label.to(device))
@@ -177,6 +194,7 @@ class Classifier(nn.Module):
     def get_loss(self,x,label):
         
         with torch.no_grad():
+            self.eval()
             y = [[float(x[0]), float(x[1])]]
             y=torch.tensor(y)
             label = np.array([label], dtype = long)
@@ -190,6 +208,7 @@ class Classifier(nn.Module):
     def get_batch_loss(self,x,label):
           
         with torch.no_grad():
+            self.eval()
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
             loss_function = nn.CrossEntropyLoss()
@@ -202,6 +221,7 @@ class Classifier(nn.Module):
     def get_batch_confidence(self,x):
         
         with torch.no_grad():
+            self.eval()
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
             pred = self.forward_2_batch(y.to(device))
@@ -211,6 +231,7 @@ class Classifier(nn.Module):
     def get_batch_accuracy(self,x,labels):
         
         with torch.no_grad():
+            self.eval()
             y = np.array(x,dtype=np.float32)
             y=torch.tensor(y)
             pred = self.forward_2_batch(y.to(device))            
@@ -221,6 +242,7 @@ class Classifier(nn.Module):
     def get_loss_evolved(self,x,label):
         
         with torch.no_grad():
+            self.eval()
             y = [[float(x[0]), float(x[1])]]
             y=torch.tensor(y)
             loss_function = nn.CrossEntropyLoss()
@@ -238,7 +260,7 @@ class Classifier(nn.Module):
     ####    self.counter_label_list = []       
     
     def train_classifier(self, x, label):
-        
+        self.train()
     ###    self.counter_label_list.append([self.counter,label,self.xy])
     ###    print(len(self.counter_label_list))
         y = [[float(x[0]), float(x[1])]]
@@ -257,6 +279,7 @@ class Classifier(nn.Module):
 
 #   untested function
     def train_classifier_prev(self):
+        self.train()
         # pointer to the data
         for i in range(min(5,len(self.hybrid_image_embeddings))):  
             x,y = self.prev_room_data[(len(self.hybrid_image_embeddings)-i)]
