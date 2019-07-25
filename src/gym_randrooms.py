@@ -6,13 +6,14 @@ import rospy
 import tf
 import cv2
 import matplotlib.pyplot as plt
+import cPickle as pickle
 import gym
 from gym.spaces import Tuple, Box
 from sensor_msgs.msg import Image as ImageMsg
 from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
 from geometry_msgs.msg import Twist, Transform, Pose
 from PIL import Image
-import drone_classifier as dc
+import image_lstm as dc
 
 X_MIN, X_MAX, Y_MIN, Y_MAX = -2.5, 2.5, -2.5, 2.5
 X_START, Y_START = (X_MIN + X_MAX) / 2, (Y_MIN + Y_MAX) / 2
@@ -21,8 +22,11 @@ MIN_WALL_DIST = 0.3
 DRONE_X_LENGTH, DRONE_Y_LENGTH = 0.2, 0.2
 TABLE_X_LENGTH, TABLE_Y_LENGTH = 1., 1.
 TABLES_PER_ROOM = 10
+QUERY_TIME = 0.5
 MAV_NAME = 'firefly'
-OUTPUT_FILE = '/home/azav/results/same_room_test2.txt'
+OUTPUT_FILE = '/home/azav/results/same_room_test3.txt'
+with open(OUTPUT_FILE, 'a') as f:
+    f.write('\n')
 
 def make_grid_pool(grid_size):
     """
@@ -87,7 +91,7 @@ class RandomRooms(gym.Env):
 
     def __init__(self, config):
         rospy.init_node('agent', anonymous=True)
-        self.model = dc.Classifier(dc.CNN)
+        self.model = dc.Classifier()
         self.ready_for_img = False
         rospy.Subscriber('/' + MAV_NAME + '/vi_sensor/left/image_raw', ImageMsg,
                          self.ros_img_callback)
@@ -106,6 +110,7 @@ class RandomRooms(gym.Env):
         #self._enter_new_room(True)
         #self.ros_publish_waypoint([0, 0])
         self.ep_total_reward = 0.
+        self.rooms_seen = 0.
         time.sleep(3.)
 
         self.action_space = Box(low=np.array([X_MIN + MIN_WALL_DIST, Y_MIN + MIN_WALL_DIST]), 
@@ -149,6 +154,7 @@ class RandomRooms(gym.Env):
         safe_x_extent = (TABLE_X_LENGTH - DRONE_X_LENGTH) / 2
         safe_y_extent = (TABLE_Y_LENGTH - DRONE_Y_LENGTH) / 2
         for x, y in table_centers:
+            x, y = x - X_MIN, y - Y_MIN
             self.true_map[int((x - safe_x_extent) * self.map_scale):
                           int((x + safe_x_extent) * self.map_scale),
                           int((y - safe_y_extent) * self.map_scale):
@@ -158,11 +164,13 @@ class RandomRooms(gym.Env):
         """Called at the end of each episode(room) to enter a new room and reset position."""
         if not isinstance(self.true_map, type(None)):
             self.save_model_performance()
+            self.rooms_seen += 1
         self.ros_publish_waypoint([X_START, Y_START])
         self._enter_new_room()
-        self.model.clear_image_embeddings()
+        self.model.clear_images()
+        self.model.train_classifier_prev()
         self.wait_for_arrival([X_START, Y_START])
-        while len(self.model.hybrid_image_embeddings) == 0:
+        while len(self.model.images) == 0:
             time.sleep(0.1)
         self.x, self.y, self.t = 0., 0., 0.
         self.ep_total_reward = 0.
@@ -180,14 +188,7 @@ class RandomRooms(gym.Env):
         :return: state, reward, done (bool), auxiliary info
         """
         assert len(action) == 2
-        label = self._get_label(action)
-        print('query: ', action)
-        print('label: ', label)
-        model_err = self._get_model_improvement(label)
-        self.model.train_classifier([self.x, self.y], label)
-        print('current room images: ' + str(len(self.model.hybrid_image_embeddings)) + '\n')
         
-        self.x, self.y, self.t = 0., 0., 0.
         while True:  # Travel to query destination in small steps
             dist_remain = self._get_distance(action)
             if dist_remain < self.img_interval:
@@ -200,6 +201,18 @@ class RandomRooms(gym.Env):
                 next_y = self.y + (action[1] - self.y) * frac_dist_remain
                 self.ros_publish_waypoint([next_x, next_y])
                 self.wait_for_arrival([next_x, next_y])
+        
+        time.sleep(QUERY_TIME)
+        label = self._get_label(action)
+        print('query: ', action)
+        print('label: ', label)
+        pos = [self.x, self.y]
+        model_err = self._get_model_improvement(pos, label)
+        print('reward: ', model_err)
+        self.model.add_data_point(pos, label) 
+        #self.model.train_classifier_current()
+        #self.model.train_classifier([self.x, self.y], label)
+        print('current room images: ' + str(len(self.model.images)) + '\n')
 
         self.t = time.time() - self.start_time
         reward = model_err  # - self.time_weight * travel_time
@@ -223,10 +236,10 @@ class RandomRooms(gym.Env):
         """Distance of the action destination from the current position."""
         return np.sqrt((action[0] - self.x) ** 2 + (action[1] - self.y) ** 2)
 
-    def _get_model_improvement(self, label, mode='gl'):
+    def _get_model_improvement(self, pos, label, mode='gl'):
         """Heuristic metric for the improvement of the safe-mapper."""
         if mode == 'gl':
-            return self.model.get_loss([self.x, self.y], label)
+            return self.model.get_loss(pos, label)
         elif mode == 'lcu':
             return self.model.uncertainty(label)
         else:
@@ -245,7 +258,7 @@ class RandomRooms(gym.Env):
         img = cv2.resize(img[:, cropped_start_idx:cropped_start_idx + img.shape[0]], (256, 256))
 
         # Feed new image to LSTM
-        self.model.encode_input([self.x, self.y], img.T)
+        self.model.store_image([self.x, self.y], img.T / 255.)
 
     def ros_pose_callback(self, pose_msg):
         """Update internal position state."""
@@ -293,6 +306,9 @@ class RandomRooms(gym.Env):
 
     def save_model_performance(self):
         """Calculates average error in current room and writes to file."""
+        if self.rooms_seen == 1 or self.rooms_seen == 20:
+            pickle.dump(self.model.prev_room_data, open('/home/azav/results/saved_data0.p', 'wb'))
+            print('AH' * 200)
         preds = []
         for pos in fixed_pool:
             preds.append(self._get_label(pos))
