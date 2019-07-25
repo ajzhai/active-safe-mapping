@@ -71,7 +71,7 @@ class Classifier(nn.Module):
         self.encoding_xy = nn.Linear(2, 64)
         self.encoding_hybrid = nn.Linear(320, self.input_feature_dim)        
         
-        self.optimizer = torch.optim.Adam(self.parameters(),weight_decay = 0.00001,  lr=0.000001)
+        self.optimizer = torch.optim.Adam(self.parameters(), weight_decay=0.00001,  lr=0.00001)
         self.to(device)
         self.prev_room_data = []
         self.counter_label_list = []
@@ -330,47 +330,44 @@ class Classifier(nn.Module):
 #   untested function
     def train_classifier_prev(self):
         print("starting training on prev")
-        self.train()
-        self.CNN.train()
-        
-        for epoch in range(10):
-
-            for i in range(min(10,len(self.prev_room_data))):  
- 
-                print(i)
-                print(len(self.prev_room_data)-i-1) 
-                room_images,xy_room,counter_label_list = self.prev_room_data[(len(self.prev_room_data)-i-1)]
-                #print("room images",len(room_images))
-    	        #print("xy_room",len(xy_room))
-	        #print("counter_label_list",counter_label_list)
+        for epoch in range(5):
+            rooms = np.random.permutation(min(5, len(self.prev_room_data)))
+            for r in rooms:
+                self.train()
+                self.CNN.train()
+                room_images, xy_room, counter_label_list = self.prev_room_data[len(self.prev_room_data)-r-1]
                 image_embeddings = F.relu(self.encoding_embed1(self.CNN(room_images.to(device))))
                 xy_embeddings = F.relu(self.encoding_xy(torch.cat(xy_room).to(device)))
-                embeddings = self.encoding_hybrid(torch.cat((image_embeddings,xy_embeddings),1))
-                N = len(counter_label_list)
- 
+                embeddings = self.encoding_hybrid(torch.cat((image_embeddings, xy_embeddings), 1))
                 max_length = counter_label_list[-1][0]
-                #Create empty data matrix
-                Data = torch.zeros(N,max_length,128)
-                Data_lengths = []
-                xy_list = []
-                labels = []
-                for j,info in enumerate(counter_label_list[::-1]):
-                    Data[j][0:info[0]] = embeddings[0:info[0]]
-                    Data_lengths.append(info[0])
-                    labels.append(info[1])
-                    xy_list.append(info[2])
 
-                Data = Data.to(device)
-                xy_list = tensor(xy_list)
-                labels = tensor(labels).long()
-                Data_lengths = tensor(Data_lengths)
-                loss_function = nn.CrossEntropyLoss()            
-                Data = torch.nn.utils.rnn.pack_padded_sequence(Data, Data_lengths, batch_first=True)
-                pred = self.forward_batch(Data, xy_list, N)    
-                labels = tensor(labels).t()
-                loss = loss_function(pred, labels)#torch.tensor(1,dtype = torch.long))
-	        print("prev_training _loss",loss.data)        
-                print("prev training pred",pred[:10])
-                loss.backward()
-                self.optimizer.step()    
+                n_labels = len(counter_label_list)
+                # Create empty data matrix
+                Data = torch.zeros(n_labels, max_length, 128).to(device)
+                Data_lengths = torch.zeros(n_labels).to(device)
+                xy_list = torch.zeros(n_labels, 2).to(device)
+                labels = torch.zeros(n_labels).long().to(device)
+                for j, info in enumerate(counter_label_list[::-1]):
+                    Data[j][0:info[0]] = embeddings[0:info[0]]
+                    Data_lengths[j] = info[0]
+                    labels[j] = info[1]
+                    xy_list[j] = tensor(info[2])
+                packed = torch.nn.utils.rnn.pack_padded_sequence(Data, Data_lengths, batch_first=True)
+                hidden_1 = torch.cat([self.hidden[0]] * n_labels, 1)
+                hidden_2 = torch.cat([self.hidden[1]] * n_labels, 1)
+                _, final_states = self.lstm(packed, (hidden_1, hidden_2))
+                # print(final_states[0].shape)
+                seqs = np.random.permutation(n_labels)
+
+                bs = 64
+                for seq in seqs:
+                    loss_function = nn.CrossEntropyLoss()
+                    self.embedding = (final_states[0][0][seq].unsqueeze(0).unsqueeze(0),
+                                      final_states[1][0][seq].unsqueeze(0).unsqueeze(0))
+                    # print(self.embedding[0].shape)
+                    pred = self.forward_2_batch(xy_list[:min(bs, len(xy_list))])
+                    loss = loss_function(pred, labels[:bs].t())  # torch.tensor(1,dtype = torch.long))
+
+                    loss.backward(retain_graph=True)
+                    self.optimizer.step()
 

@@ -59,6 +59,7 @@ class Classifier(nn.Module):
         self.encoding_xy = nn.Linear(2, 64)
         self.encoding_hybrid = nn.Linear(320, self.input_feature_dim)        
         self.to(device)
+        self.load_state_dict(torch.load('/home/azav/results/cool_weights.pth'))
 ####        self.prev_room_data = []
 
 #Propogate through LSTM
